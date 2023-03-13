@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "vonmises"
+version = "0.1.0"
+description = ""
+authors = ["marshrossney <17361029+marshrossney@users.noreply.github.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+ipython = "^8.11.0"
+numpy = "^1.24.2"
+matplotlib = "^3.7.1"
+seaborn = "^0.12.2"
+jupyterlab = "^3.6.1"
+ipywidgets = "^8.0.4"
+torch = "^1.13.1"
+pytorch-lightning = "^1.9.4"
+tensorboard = "^2.12.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
