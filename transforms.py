@@ -221,7 +221,8 @@ class C2SplineTransform:
         weights: Tensor,
     ) -> tuple[Tensor]:
         
-        Δ = F.softplus(intervals) + 1e-2  # min interval TODO make configurable
+        #Δ = F.softplus(intervals) + 1e-3  # 
+        Δ = torch.sigmoid(intervals) + 0.1
         Δ = Δ / Δ.sum(dim=-1, keepdim=True)
         Δpad = F.pad(Δ, (1, 1), "constant", 0)
         
