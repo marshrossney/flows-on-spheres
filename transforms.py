@@ -28,7 +28,7 @@ class MobiusMixtureTransform:
         return self.n_mixture * (2 + int(self.weighted))
 
     def _constrain_parameters(self, params: Tensor) -> tuple[Tensor, Tensor]:
-        params = params.view(*params.shape[:-1], self.n_mixture, -1)
+        params = params.view(*params.shape[:-2], self.n_mixture, -1)
         if params.shape[-1] == 3:
             omega, rho = params.split([2, 1], dim=-1)
             rho = torch.softmax(rho, dim=-2)
@@ -47,7 +47,7 @@ class MobiusMixtureTransform:
     def forward(self, x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
         *data_shape, n_coords = x.shape
         assert n_coords == 2
-        assert params.shape == torch.Size([*data_shape, self.n_params])
+        assert params.shape == torch.Size([*data_shape, 2, self.n_params // 2])
 
         omega, rho = self._constrain_parameters(params)
 
@@ -173,7 +173,6 @@ class RQSplineTransform:
 
     def forward(self, x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
         x = x.contiguous()
-        # params = params.unsqueeze(dim=1)  # shape (batch, 1, n_params)
 
         widths, heights, derivs = params.split(
             (self.n_segments, self.n_segments, self.n_knots),
