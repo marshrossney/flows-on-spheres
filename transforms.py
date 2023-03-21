@@ -4,50 +4,100 @@ import math
 import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
+import torch.linalg as LA
 
 Tensor = torch.Tensor
 
 PI = math.pi
 
 
-class MobiusTransform:
-    """
-    Mobius transform from the circle to itself.
+class MobiusMixtureTransform:
+    def __init__(
+        self, n_mixture: int, weighted: bool = True, epsilon: float = 1e-3
+    ) -> None:
+        self.n_mixture = n_mixture
+        self.weighted = weighted and n_mixture > 1
+        self.epsilon = epsilon
 
-        -y = (1 - |ω|^2) / |x - ω|^2 * (x - ω) - ω
-        
-        |dy/dx| = (1 - |ω|^2) / |x - ω|^2
-    
-    The transformation takes a batch of inputs `x` with shape
-    (n_batch, ..., 2) that are (x, y) coordinates on the unit circle,
-    and a batch of parameters `omega` with the same shape, but the
-    (x, y) coordinates live on the unit disk. The transformation
-    returns coordinates `y` on the unit circle.
-    """
-    
     @property
     def identity_params(self) -> Tensor:
-        return torch.tensor([0.0, 0.0])
-    
+        return torch.zeros(self.n_params)
+
     @property
     def n_params(self) -> int:
-        return 2
-    
-    def forward(self, x: Tensor, omega: Tensor) -> tuple[Tensor, Tensor]:
-        assert x.shape[-1] == 2
-        assert x.shape == omega.shape
-        #assert torch.allclose(x.pow(2).sum(dim=-1), torch.ones(x.shape[:-1]))
-        assert torch.all(omega.pow(2).sum(dim=-1) < 1), f"{omega.pow(2).sum(dim=-1).abs().max()}"
-        
-        coeff = (1 - omega.pow(2).sum(dim=-1, keepdim=True)) / (x - omega).pow(2).sum(dim=-1, keepdim=True)
-        y = - (coeff * (x - omega) - omega)
-        ldj = torch.log(coeff).flatten(start_dim=1).sum(dim=1)
-        
-        return y, ldj
-    
+        return self.n_mixture * (2 + int(self.weighted))
+
+    def _constrain_parameters(self, params: Tensor) -> tuple[Tensor, Tensor]:
+        params = params.view(*params.shape[:-1], self.n_mixture, -1)
+        if params.shape[-1] == 3:
+            omega, rho = params.split([2, 1], dim=-1)
+            rho = torch.softmax(rho, dim=-2)
+        elif params.shape[-1] == 2:
+            omega = params
+            rho = 1 / self.n_mixture
+        else:
+            raise ValueError("Wrong number of parameters provided")
+
+        omega = torch.tanh(omega) * (1 - self.epsilon)
+        omega1, omega2 = omega.split(1, dim=-1)
+        omega = torch.cat([omega1, omega2 * (1 - omega1.pow(2)).sqrt()], dim=-1)
+
+        return omega, rho
+
+    def forward(self, x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
+        *data_shape, n_coords = x.shape
+        assert n_coords == 2
+        assert params.shape == torch.Size([*data_shape, self.n_params])
+
+        omega, rho = self._constrain_parameters(params)
+
+        assert torch.all(
+            omega.pow(2).sum(dim=-1) < 1
+        ), f"{omega.pow(2).sum(dim=-1).abs().max()}"
+
+        x.unsqueeze_(dim=-2)
+        x_10 = torch.tensor([1.0, 0.0], device=x.device).view(
+            *[1 for _ in data_shape], 1, 2
+        )
+
+        assert x.shape == torch.Size([*data_shape, 1, 2])
+        if type(rho) is Tensor:
+            assert rho.shape == torch.Size([*data_shape, self.n_mixture, 1])
+        assert omega.shape == torch.Size([*data_shape, self.n_mixture, 2])
+
+        one_minus_modsq_omega = 1 - omega.pow(2).sum(dim=-1, keepdim=True)
+        modsq_x_minus_omega = (x - omega).pow(2).sum(dim=-1, keepdim=True)
+        modsq_x_10_minus_omega = (x_10 - omega).pow(2).sum(dim=-1, keepdim=True)
+        vol_factor = one_minus_modsq_omega / modsq_x_minus_omega
+        vol_factor_10 = one_minus_modsq_omega / modsq_x_10_minus_omega
+
+        g = vol_factor * (x - omega) - omega
+        g_10 = vol_factor_10 * (x_10 - omega) - omega
+
+        g1, g2 = g.split(1, dim=-1)
+        g1_10, g2_10 = g_10.split(1, dim=-1)
+
+        # Rotate such that g((1, 0)) = (1, 0)
+        g1_rot = g1_10 * g1 + g2_10 * g2
+        g2_rot = -g2_10 * g1 + g1_10 * g2
+
+        if self.n_mixture == 1:
+            y = torch.cat([g1_rot, g2_rot], dim=-1).squeeze(dim=-2)
+            log_delta_vol = vol_factor.log().flatten(start_dim=1).sum(dim=1)
+        else:
+            theta = torch.fmod(torch.atan2(g2_rot, g1_rot) + 2 * PI, 2 * PI)
+            theta_mean = (rho * theta).sum(dim=-2)
+            y = torch.cat([theta_mean.cos(), theta_mean.sin()], dim=-1)
+            log_delta_vol = (
+                (rho * vol_factor).sum(dim=-2).log().flatten(start_dim=1).sum(dim=1)
+            )
+
+        assert y.shape == torch.Size([*data_shape, 2])
+
+        return y, log_delta_vol
+
     def __call__(self, x, params):
         return self.forward(x, params)
-        
 
 
 class RQSplineTransform:
@@ -204,40 +254,33 @@ class RQSplineTransformCircularDomain(RQSplineTransform):
             *derivs.shape[:-1], -1
         )
 
-class C2SplineTransform:
-    
+
+class BSplineTransform:
     def __init__(self, interval: tuple[float], n_segments: int) -> None:
-        #self.a, self.b = interval
         self.interval = interval
         self.n_segments = n_segments
-    
+
     @property
     def identity_params(self) -> Tensor:
         return torch.ones(self.n_segments * 2 + 2)
-    
+
     def build_spline(
         self,
         intervals: Tensor,
         weights: Tensor,
     ) -> tuple[Tensor]:
-        
-        #Δ = F.softplus(intervals) + 1e-3  # 
+        # Δ = F.softplus(intervals) + 1e-3
         Δ = torch.sigmoid(intervals) + 0.1
         Δ = Δ / Δ.sum(dim=-1, keepdim=True)
         Δpad = F.pad(Δ, (1, 1), "constant", 0)
-        
-        #print(f"Δ = {Δ.shape}")
-        
-        ρ = F.softplus(weights) + 1e-3  # min weight TODO make configurable
-        ρ = ρ / (((ρ[..., :-2] + ρ[..., 1:-1] + ρ[..., 2:]) / 3) * Δ).sum(dim=-1, keepdim=True)
-        
-        ω = (ρ[..., 1:] - ρ[..., :-1]) / (Δpad[..., :-1] + Δpad[..., 1:])
-        I = ρ[..., 1:-1] * Δ + (1/3) * (ω[..., 1:] - ω[..., :-1]) * Δ ** 2
-        
-        #print(f"ρ = {ρ.shape}")
-        #print(f"ω = {ω.shape}")
 
-        #Y = np.concatenate(([a,], a + np.cumsum(I, dim=-1)))
+        ρ = F.softplus(weights) + 1e-3  # min weight TODO make configurable
+        ρ = ρ / (((ρ[..., :-2] + ρ[..., 1:-1] + ρ[..., 2:]) / 3) * Δ).sum(
+            dim=-1, keepdim=True
+        )
+
+        ω = (ρ[..., 1:] - ρ[..., :-1]) / (Δpad[..., :-1] + Δpad[..., 1:])
+        I = ρ[..., 1:-1] * Δ + (1 / 3) * (ω[..., 1:] - ω[..., :-1]) * Δ**2
 
         zeros = torch.zeros_like(I).sum(dim=-1, keepdim=True)
 
@@ -255,31 +298,22 @@ class C2SplineTransform:
             ),
             dim=-1,
         )
-        #print(f"X = {X.shape}")
-        #print(f"Y = {Y.shape}")
-        
+
         return Δpad, ρ, ω, X, Y
-    
+
     def forward(self, x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
         x = x.contiguous()
-        #params = params.unsqueeze(dim=1)  # shape (batch, 1, n_params)
-        
-        #print("x: ", x.min(), x.max())
+
         x = x - self.interval[0]
         x = x / (self.interval[1] - self.interval[0])
-        
+
         intervals, weights = params.split(
             (self.n_segments, self.n_segments + 2),
             dim=-1,
         )
         Δ, ρ, ω, X, Y = self.build_spline(intervals, weights)
-        #print(f"Δ = {Δ[0].tolist()},  ρ = {ρ[0].tolist()}")
-        
-        #print(f"x = {x.shape}")
-
 
         ix = torch.searchsorted(X, x.unsqueeze(-1), side="right")
-        #print(ix.min(), ix.max())
         ix.clamp_(1, self.n_segments)
 
         # Get parameters of the segments that x falls in
@@ -289,38 +323,18 @@ class C2SplineTransform:
         ωim1 = torch.gather(ω, -1, ix - 1).squeeze(-1)
         x0 = torch.gather(X, -1, ix - 1).squeeze(-1)
         y0 = torch.gather(Y, -1, ix - 1).squeeze(-1)
-        
-        #if not torch.all(x > x0):
-        #    print(f"x = {x[~(x > x0)]}, x0 = {x0[~(x > x0)]}")
-        #if not torch.all(x < x0 + Δ):
-        #    print(f"x = {x[~(x < x0 + Δ)]}, x0 + Δ = {(x0 + Δ)[~(x < x0 + Δ)]}")
 
         θ = (x - x0) / Δ
-        
-        #if not torch.all(θ >= 0):
-        #    print(f"θ = {θ[~(θ >= 0)]}")
-        #if not torch.all(θ < 1):
-        #    print(f"θ = {θ[~(θ < 1)]}")
 
-        #alpha.clamp_(1e-4, 1 - 1e-4)
-        
         y = (
             y0
             + ρ * Δ * θ
-            - ωim1 * Δ ** 2 * θ * (1 - θ)
-            + (1/3) * (ωi - ωim1) * Δ ** 2 * θ ** 3
+            - ωim1 * Δ**2 * θ * (1 - θ)
+            + (1 / 3) * (ωi - ωim1) * Δ**2 * θ**3
         )
-        
-        #print("X: ", X[0])
-        #print("Y: ", Y[0])
-        #print("x: ", x.min(), x.max())
-        #print("y: ", y.min(), y.max())
-        gradient = (
-            ρ
-            + ωi * Δ * θ ** 2
-            - ωim1 * Δ * (1 - θ) ** 2
-        )
-        
+
+        gradient = ρ + ωi * Δ * θ**2 - ωim1 * Δ * (1 - θ) ** 2
+
         if gradient.less(0.0).any():
             values = gradient[gradient < 0]
             print(f"Gradient has negative values: {values.tolist()}")
@@ -333,16 +347,11 @@ class C2SplineTransform:
             gradient = gradient.clamp(min=1e-6)
 
         ldj = gradient.log().flatten(start_dim=1).sum(dim=1)
-        
+
         y = y * (self.interval[1] - self.interval[0])
         y = y + self.interval[0]
-        ldj += math.log(self.interval[1] - self.interval[0]) * torch.numel(y[0])
-        
-        #print("y: ", y.min(), y.max())
 
         return y, ldj
 
     def __call__(self, x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
         return self.forward(x, params)
-
-

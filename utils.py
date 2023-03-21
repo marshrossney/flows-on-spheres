@@ -97,6 +97,11 @@ def batched_outer(x: Tensor, y: Tensor) -> Tensor:
 def batched_mv(M: Tensor, v: Tensor) -> Tensor:
     return (M * v.unsqueeze(dim=-2)).sum(dim=-1)
 
+
+def mod_2pi(angles: Tensor) -> Tensor:
+    return torch.remainder(angles, 2 * PI)
+
+
 # M = torch.rand(3, 3)
 # v = torch.rand(3)
 # res = batched_mv(M.view(1, 3, 3), v.view(1, 3))
