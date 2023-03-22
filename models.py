@@ -1,5 +1,5 @@
 import math
-from typing import TypeAlias, Callable
+from typing import TypeAlias, Callable, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -8,6 +8,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 import seaborn as sns
 import torch
 import torch.linalg as LA
+import torch.nn.functional as F
 
 from distributions import SphericalUniformPrior3D
 from transforms import (
@@ -26,6 +27,8 @@ from utils import (
 from visualisations import scatter, pairplot
 
 Tensor: TypeAlias = torch.Tensor
+Module: TypeAlias = torch.nn.Module
+Parameter: TypeAlias = torch.nn.Parameter
 
 π = math.pi
 
@@ -38,13 +41,13 @@ class RecursiveFlowS2(pl.LightningModule):
         z_transformer: Callable,
         xy_transformer: Callable,
         n_layers: int,
-        hidden_shape: list[int],
-        activation: str,
         batch_size: int,
         val_batch_size: int = pow(2, 12),
         test_batch_size: int = pow(2, 14),
+        net_hidden_shape: Optional[list[int]] = None,
+        net_activation: str = "Tanh",
         init_lr: float = 0.001,
-        ρ_min: float = 1e-12,
+        softmax_beta: float = 1e8,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -60,7 +63,7 @@ class RecursiveFlowS2(pl.LightningModule):
         self.val_batch_size = val_batch_size
         self.test_batch_size = test_batch_size
         self.init_lr = init_lr
-        self.ρ_min = ρ_min
+        self.softmax_beta = softmax_beta
 
         assert isinstance(z_transformer, RQSplineTransform) or isinstance(
             z_transformer, BSplineTransform
@@ -72,34 +75,45 @@ class RecursiveFlowS2(pl.LightningModule):
         self.xy_transformer = xy_transformer
         self.polar_mode = isinstance(xy_transformer, RQSplineTransformCircularDomain)
 
-        self.z_params = torch.nn.Parameter(
-            torch.stack(
-                [self.z_transformer.identity_params for _ in range(n_layers)],
-                dim=0,
-            )
-        )
-        self.xy_params = torch.nn.ModuleList(
+        self.z_params = torch.nn.ParameterList(
             [
-                simple_fnn_conditioner(
-                    in_features=1,
-                    out_features=self.xy_transformer.n_params,
-                    hidden_shape=hidden_shape,
-                    activation=activation,
-                )
+                torch.nn.Parameter(torch.tensor(z_transformer.identity_params))
+                for _ in range(n_layers)
+            ]
+        )
+        if net_hidden_shape is None:
+            self.xy_params = torch.nn.ParameterList(
+                [
+                    torch.nn.Parameter(torch.tensor(xy_transformer.identity_params))
+                    for _ in range(n_layers)
+                ]
+            )
+        else:
+            self.xy_params = torch.nn.ModuleList(
+                [
+                    simple_fnn_conditioner(
+                        in_features=1,
+                        out_features=xy_transformer.n_params,
+                        hidden_shape=net_hidden_shape,
+                        activation=net_activation,
+                    )
+                    for _ in range(n_layers)
+                ]
+            )
+
+        # Random global rotations applied after each layer (potentially trainable)
+        self.rotations = torch.nn.ParameterList(
+            [
+                torch.nn.Parameter(torch.empty(1).uniform_(0, 2 * π))
                 for _ in range(n_layers)
             ]
         )
 
-        # Random global rotations applied after each layer (potentially trainable)
-        self.rotations = torch.nn.Parameter(torch.empty(n_layers).uniform_(0, 2 * π))
-
         if self.logger is not None and type(self.logger) is TensorBoardLogger:
             self.logger.log_hyperparams(self.hparams)
 
-    def _apply_global_rotation(self, xy_or_ϕ: Tensor, layer: int) -> Tensor:
+    def _apply_global_rotation(self, xy_or_ϕ: Tensor, θ: Tensor) -> Tensor:
         *data_shape, coord_dims = xy_or_ϕ.shape
-
-        θ = self.rotations[layer]
 
         if self.polar_mode:  # working with angles
             assert coord_dims == 1
@@ -122,7 +136,7 @@ class RecursiveFlowS2(pl.LightningModule):
         ldj = torch.zeros(inputs.shape[0], device=inputs.device)
 
         # Map sphere to cylinder
-        ρ = (1 - z**2).clamp(min=self.ρ_min, max=1.0).sqrt()
+        ρ = F.softplus(1 - z**2, beta=self.softmax_beta).sqrt()
         xy = xy / ρ
 
         if self.polar_mode:
@@ -131,27 +145,30 @@ class RecursiveFlowS2(pl.LightningModule):
         else:
             xy_or_ϕ = xy
 
-        for layer_idx, (z_params, xy_params) in enumerate(
-            zip(
-                self.z_params.split(1, dim=0),
-                self.xy_params,
-            )
+        for layer_idx, (z_params, xy_params, θ) in enumerate(
+            zip(self.z_params, self.xy_params, self.rotations)
         ):
             z, ldj_z = self.z_transformer(z, z_params.expand(*z.shape, -1))
+
+            xy_params = (
+                xy_params.expand(*xy_or_ϕ.shape[:-1], -1)
+                if isinstance(xy_params, Parameter)
+                else xy_params(z)
+            )
             xy_or_ϕ, ldj_xy = self.xy_transformer(
-                xy_or_ϕ, xy_params(z).view(*xy_or_ϕ.shape, -1)
+                xy_or_ϕ, xy_params.view(*xy_or_ϕ.shape, -1)
             )
 
-            ldj += ldj_z + ldj_xy
+            xy_or_ϕ = self._apply_global_rotation(xy_or_ϕ, θ)
 
-            xy_or_ϕ = self._apply_global_rotation(xy_or_ϕ, layer_idx)
+            ldj += ldj_z + ldj_xy
 
         if self.polar_mode:
             xy = torch.cat([torch.cos(xy_or_ϕ), torch.sin(xy_or_ϕ)], dim=-1)
         else:
             xy = xy_or_ϕ
 
-        ρ = (1 - z**2).clamp(min=self.ρ_min, max=1.0).sqrt()
+        ρ = F.softplus(1 - z**2, beta=self.softmax_beta).sqrt()
         xy = ρ * xy
 
         outputs = torch.cat([xy, z], dim=-1)

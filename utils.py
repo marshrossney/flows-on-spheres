@@ -72,9 +72,12 @@ def effective_sample_size(log_weights: Tensor) -> float:
     return float(ess)
 
 
-def spherical_mesh(n: int) -> Tensor:
-    theta = torch.linspace(0, PI, n)
-    theta = torch.acos(1 - 2 * torch.linspace(0, 1, n))
+def spherical_mesh(n: int, theta_uniform: bool = True) -> Tensor:
+    theta = (
+        torch.linspace(0, PI, n)
+        if theta_uniform
+        else torch.acos(1 - 2 * torch.linspace(0, 1, n))
+    )
     phi = torch.linspace(0, 2 * PI, n)
 
     theta, phi = torch.meshgrid(theta, phi)
