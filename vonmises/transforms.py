@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 import torch.linalg as LA
 
+
 Tensor = torch.Tensor
 
 PI = math.pi
@@ -28,7 +29,7 @@ class MobiusMixtureTransform:
         return self.n_mixture * (2 + int(self.weighted))
 
     def _constrain_parameters(self, params: Tensor) -> tuple[Tensor, Tensor]:
-        params = params.view(*params.shape[:-2], self.n_mixture, -1)
+        params = params.view(*params.shape[:-1], self.n_mixture, -1)
         if params.shape[-1] == 3:
             omega, rho = params.split([2, 1], dim=-1)
             rho = torch.softmax(rho, dim=-2)
@@ -47,7 +48,7 @@ class MobiusMixtureTransform:
     def forward(self, x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
         *data_shape, n_coords = x.shape
         assert n_coords == 2
-        assert params.shape == torch.Size([*data_shape, 2, self.n_params // 2])
+        assert params.shape == torch.Size([*data_shape, self.n_params])
 
         omega, rho = self._constrain_parameters(params)
 

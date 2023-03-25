@@ -6,7 +6,7 @@ authors = ["marshrossney <17361029+marshrossney@users.noreply.github.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "~3.10"
 ipython = "^8.11.0"
 numpy = "^1.24.2"
 matplotlib = "^3.7.1"
@@ -17,6 +17,7 @@ torch = "^1.13.1"
 pytorch-lightning = "^1.9.4"
 tensorboard = "^2.12.0"
 black = {extras = ["jupyter"], version = "^23.1.0"}
+scipy = "^1.10.1"
 
 
 [build-system]

@@ -1,16 +1,40 @@
 from math import pi as π
-from typing import TypeAlias
+from typing import TypeAlias, Optional
 
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 import torch
+import torch.linalg as LA
 
-from utils import spherical_mesh
+from vonmises.utils import circle_vectors_to_angles
+
+#from utils import spherical_mesh
 
 Tensor: TypeAlias = torch.Tensor
+Figure: TypeAlias = plt.Figure
 
 sns.set_theme()
+
+
+
+def scatter2d(xy: Tensor, polar: bool = False, **scatter_kwargs) -> Figure:
+    if polar:
+        r = LA.vector_norm(xy, dim=-1, keepdim=True)
+        ϕ = circle_vectors_to_angles(xy)
+        fig, ax = plt.subplots(subplot_kw={"polar": True})
+        ax.set_ylim([0, 1.1 * r.max()])
+        ax.set_xticklabels([])
+        ax.set_aspect("equal")
+        ax.scatter(ϕ, r, **scatter_kwargs)
+        return fig
+    else:
+        x, y = xy.split(1, dim=-1)
+        fig, ax = plt.subplots()
+        ax.scatter(x, y, **scatter_kwargs)
+        return fig
 
 
 def pairplot(xyz: Tensor) -> sns.PairGrid:
@@ -54,13 +78,12 @@ def heatmap(xyz: Tensor, bins: int = 50, **pcolormesh_kwargs) -> plt.Figure:
     return fig
 
 
-def line(xyz: Tensor, figsize: tuple = (6, 6), **plot_kwargs) -> plt.Figure:
+def line(xyz: Tensor, projection: str = "aitoff", **plot_kwargs) -> plt.Figure:
     x, y, z = xyz.split(1, dim=-1)
     θ = torch.asin(z)
     ϕ = torch.atan2(y, x)
-    θϕ = torch.cat([θ, ϕ], dim=-1)
 
-    fig, ax = plt.subplots(subplot_kw=dict(projection="mollweide"))
+    fig, ax = plt.subplots(subplot_kw=dict(projection=projection))
     ax.set_yticklabels([])
     ax.set_xticklabels([])
 
@@ -71,17 +94,30 @@ def line(xyz: Tensor, figsize: tuple = (6, 6), **plot_kwargs) -> plt.Figure:
     return fig
 
 
-def scatter(xyz: Tensor, figsize: tuple = (6, 6), **scatter_kwargs) -> plt.Figure:
+
+def scatter(
+    xyz: Tensor,
+    colours: Optional[Tensor] = None,
+    projection: str = "aitoff",
+    **scatter_kwargs
+) -> plt.Figure:
     x, y, z = xyz.split(1, dim=-1)
     θ = torch.asin(z)
     ϕ = torch.atan2(y, x)
-    θϕ = torch.cat([θ, ϕ], dim=-1)
 
-    fig, ax = plt.subplots(subplot_kw=dict(projection="mollweide"))
+    if colours is not None:
+        cmap = ScalarMappable(
+            norm=Normalize(vmin=colours.min(), vmax=colours.max()), cmap="viridis"
+        )
+        colours = cmap.to_rgba(colours)
+
+    fig, ax = plt.subplots(subplot_kw=dict(projection=projection))
     ax.set_yticklabels([])
     ax.set_xticklabels([])
 
-    ax.scatter(ϕ, θ, **scatter_kwargs)
+    sc = ax.scatter(ϕ, θ, c=colours, **scatter_kwargs)
+
+    fig.colorbar(cmap, ax=ax, shrink=1)
 
     fig.tight_layout()
 
