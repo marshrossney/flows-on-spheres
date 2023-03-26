@@ -13,11 +13,7 @@ import torch
 import torch.linalg as LA
 import torch.nn.functional as F
 
-from vonmises.distributions import (
-    VonMisesFisherDensity,
-    VonMisesFisherMixtureDensity,
-    uniform_prior,
-)
+from vonmises.distributions import Density, uniform_prior
 from vonmises.utils import (
     apply_global_rotation,
     circle_vectors_to_angles,
@@ -57,7 +53,7 @@ def make_net(
 class BaseFlow(pl.LightningModule):
     def __init__(
         self,
-        target: VonMisesFisherDensity | VonMisesFisherMixtureDensity,
+        target: Density,
         n_layers: int,
         batch_size: int,
         val_batch_size: int = DEFAULT_VAL_BATCH_SIZE,
@@ -73,6 +69,49 @@ class BaseFlow(pl.LightningModule):
 
         self.target = target
 
+    def training_step(self, inputs: tuple[Tensor, Tensor], *_) -> Tensor:
+        x_in, log_prior_density = inputs
+        x_out, delta_log_vol = self(x_in)
+        log_target_density = self.target.log_density(x_out)
+        log_model_density = log_prior_density - delta_log_vol
+        weights = log_target_density - log_model_density
+
+        kl_div = weights.mean().negative()
+        self.log("loss", kl_div)
+
+        return kl_div
+
+    def validation_step(self, inputs: tuple[Tensor, Tensor], *_) -> None:
+        x_in, log_prior_density = inputs
+        x_out, delta_log_vol = self(x_in)
+        log_model_density = log_prior_density - delta_log_vol
+        log_target_density = self.target.log_density(x_out)
+        weights = log_target_density - log_model_density
+
+        self.log("acceptance", metropolis_acceptance(weights))
+        self.log("ess", effective_sample_size(weights))
+        self.log("kl_div", weights.mean().negative())
+
+    def test_step(self, inputs: tuple[Tensor, Tensor], *_) -> None:
+        x_in, log_prior_density = inputs
+        x_out, delta_log_vol = self(x_in)
+        log_model_density = log_prior_density - delta_log_vol
+        log_target_density = self.target.log_density(x_out)
+        weights = log_target_density - log_model_density
+
+        self.log("test/acceptance", metropolis_acceptance(weights))
+        self.log("test/ess", effective_sample_size(weights))
+        self.log("test/kl_div", weights.mean().negative())
+
+    @torch.no_grad()
+    def sample(self, sample_size: int = 1) -> tuple[Tensor, Tensor, Tensor]:
+        prior = uniform_prior(self.target.dim, sample_size)
+        x_in, log_prior_density = next(iter(prior))
+        x_out, delta_log_vol = self(x_in)
+        log_model_density = log_prior_density - delta_log_vol
+        log_target_density = self.target.log_density(x_out)
+        return x_out, log_model_density, log_target_density
+
     def forward_with_forces(self, x_in: Tensor) -> Tensor:
         x_in.requires_grad_(True)
         x_in.grad = None
@@ -86,37 +125,6 @@ class BaseFlow(pl.LightningModule):
         x_in.requires_grad_(False)
         x_in.grad = None
         return force
-
-    def training_step(self, inputs: tuple[Tensor, Tensor], *_) -> Tensor:
-        x_in, log_p_unif = inputs
-        x_out, delta_log_vol = self(x_in)
-        log_p_vMF = self.target.compute_log(x_out)
-        weights = log_p_vMF - (log_p_unif - delta_log_vol)
-
-        kl_div = weights.mean().negative()
-        self.log("loss", kl_div)
-
-        return kl_div
-
-    def validation_step(self, inputs: tuple[Tensor, Tensor], *_) -> None:
-        x_in, log_p_unif = inputs
-        x_out, delta_log_vol = self(x_in)
-        log_p_vMF = self.target.compute_log(x_out)
-        weights = log_p_vMF - (log_p_unif - delta_log_vol)
-
-        self.log("acceptance", metropolis_acceptance(weights))
-        self.log("ess", effective_sample_size(weights))
-        self.log("kl_div", weights.mean().negative())
-
-    def test_step(self, inputs: tuple[Tensor, Tensor], *_) -> None:
-        x_in, log_p_unif = inputs
-        x_out, delta_log_vol = self(x_in)
-        log_p_vMF = self.target.compute_log(x_out)
-        weights = log_p_vMF - (log_p_unif - delta_log_vol)
-
-        self.log("test/acceptance", metropolis_acceptance(weights))
-        self.log("test/ess", effective_sample_size(weights))
-        self.log("test/kl_div", weights.mean().negative())
 
     def train_dataloader(self):
         return uniform_prior(self.target.dim, self.batch_size)
@@ -135,7 +143,7 @@ class CircularFlow(BaseFlow):
     def __init__(
         self,
         transformer: Callable,
-        target: VonMisesFisherDensity | VonMisesFisherMixtureDensity,
+        target: Density,
         n_layers: int,
         batch_size: int,
         val_batch_size: int = DEFAULT_VAL_BATCH_SIZE,
@@ -182,17 +190,17 @@ class CircularFlow(BaseFlow):
 
     @torch.no_grad()
     def visualise(self, polar: bool = False) -> "Figure":
-        x_in, log_p_unif = next(self.val_dataloader())
+        x_in, log_prior_density = next(self.val_dataloader())
         x_out, delta_log_vol = self(x_in)
-        log_p_vMF = self.target.compute_log(x_out)
-        p_vMF = self.target.compute(x_out)
+        log_target_density = self.target.log_density(x_out)
+        target_density = self.target.density(x_out)
         ϕ = circle_vectors_to_angles(x_out)
 
         fig, ax = plt.subplots(subplot_kw={"polar": True} if polar else {})
         ax.set_xlabel(r"$\phi$")
         ax.set_ylabel("density")
-        ax.scatter(ϕ, (log_p_unif - delta_log_vol).exp(), s=0.4, label="model")
-        ax.scatter(ϕ, p_vMF, s=0.4, label="target")
+        ax.scatter(ϕ, (log_prior_density - delta_log_vol).exp(), s=0.4, label="model")
+        ax.scatter(ϕ, target_density, s=0.4, label="target")
         ax.legend()
         return fig
 

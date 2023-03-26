@@ -1,6 +1,7 @@
 """
 Classes defining von Mises-Fisher and uniform distributions on the D-spheres.
 """
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from math import exp, gamma, isclose, lgamma, log, pi as π, sqrt
 from typing import Optional, TypeAlias
@@ -11,6 +12,53 @@ from scipy.special import iv
 
 Tensor: TypeAlias = torch.Tensor
 IterableDataset: TypeAlias = torch.utils.data.IterableDataset
+
+
+class Density(ABC):
+    @property
+    @abstractmethod
+    def dim(self) -> int:
+        ...
+
+    @abstractmethod
+    def density(self, x: Tensor) -> Tensor:
+        ...
+
+    @abstractmethod
+    def log_density(self, x: Tensor) -> Tensor:
+        ...
+
+
+class MixtureDensity(Density):
+    def __init__(
+        self,
+        components: list[Density],
+        weights: Optional[list[float]] = None,
+    ):
+        self.components = components
+        if weights is None:
+            self.weights = [1 / len(components) for _ in components]
+        else:
+            exp_weights = [exp(weight) for weight in weights]
+            sum_exp_weights = sum(exp_weights)
+            self.weights = [exp_weight / sum_exp_weights for exp_weight in exp_weights]
+
+        assert len(set([f.dim for f in components])) == 1
+        assert len(self.weights) == len(self.components)
+        assert isclose(sum(self.weights), 1)
+
+    @property
+    def dim(self) -> int:
+        return self.components[0].dim
+
+    def density(self, x: Tensor) -> Tensor:
+        total = torch.zeros(x.shape[0], device=x.device)
+        for ρ, f in zip(self.weights, self.components):
+            total += ρ * f.density(x)
+        return total
+
+    def log_density(self, x: Tensor) -> Tensor:
+        return self.density(x).log()
 
 
 @dataclass
@@ -38,39 +86,13 @@ class VonMisesFisherDensity:
         self.norm = pow(self.κ, -v) * pow(2 * π, v + 1) * iv(v, self.κ)
         self.log_norm = log(self.norm)
 
-    def compute(self, x: Tensor) -> Tensor:
+    def density(self, x: Tensor) -> Tensor:
         μ = torch.tensor(self.μ, device=x.device)
         return x.mv(μ).mul(self.κ).exp().divide(self.norm)
 
-    def compute_log(self, x: Tensor) -> Tensor:
+    def log_density(self, x: Tensor) -> Tensor:
         μ = torch.tensor(self.μ, device=x.device)
         return x.mv(μ).mul(self.κ).subtract(self.log_norm)
-
-
-@dataclass
-class VonMisesFisherMixtureDensity:
-    densities: list[VonMisesFisherDensity]
-    weights: Optional[list[float]] = None
-
-    def __post_init__(self):
-        if self.weights is None:
-            self.weights = [1 / len(self.densities) for _ in self.densities]
-        else:
-            exp_weights = [exp(weight) for weight in self.weights]
-            sum_exp_weights = sum(exp_weights)
-            self.weights = [exp_weight / sum_exp_weights for exp_weight in exp_weights]
-
-        assert len(self.weights) == len(self.densities)
-        assert isclose(sum(self.weights), 1)
-
-    def compute(self, x: Tensor) -> Tensor:
-        total = torch.zeros(x.shape[0], device=x.device)
-        for ρ, density in zip(self.weights, self.densities):
-            total += ρ * density.compute(x)
-        return total
-
-    def compute_log(self, x: Tensor) -> Tensor:
-        return self.compute(x).log()
 
 
 def uniform_prior(dim: int, batch_size: int) -> IterableDataset:
