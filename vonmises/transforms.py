@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 import torch.linalg as LA
 
+from vonmises.utils.geometry import circle_vectors_to_angles, circle_angles_to_vectors
 
 Tensor = torch.Tensor
 
@@ -62,7 +63,7 @@ class MobiusMixtureTransform:
         )
 
         assert x.shape == torch.Size([*data_shape, 1, 2])
-        if type(rho) is Tensor:
+        if isinstance(rho, Tensor):
             assert rho.shape == torch.Size([*data_shape, self.n_mixture, 1])
         assert omega.shape == torch.Size([*data_shape, self.n_mixture, 2])
 
@@ -173,6 +174,11 @@ class RQSplineTransform:
         return widths, heights, derivs, knots_xcoords, knots_ycoords
 
     def forward(self, x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
+        *data_shape, n_coords = x.shape
+        assert params.shape[:-1] == torch.Size(data_shape)
+        assert n_coords == 1
+        assert params.shape[-1] == self.n_params
+
         x = x.contiguous()
 
         widths, heights, derivs = params.split(
@@ -187,37 +193,29 @@ class RQSplineTransform:
             knots_ycoords,
         ) = self.build_spline(widths, heights, derivs)
 
-        segment_idx = torch.searchsorted(knots_xcoords, x.unsqueeze(-1)) - 1
-        segment_idx.clamp_(0, self.n_segments - 1)
+        ix = torch.searchsorted(knots_xcoords, x) - 1
+        ix.clamp_(0, self.n_segments - 1)
 
         # Get parameters of the segments that x falls in
-        w = torch.gather(widths, -1, segment_idx).squeeze(-1)
-        h = torch.gather(heights, -1, segment_idx).squeeze(-1)
-        d0 = torch.gather(derivs, -1, segment_idx).squeeze(-1)
-        d1 = torch.gather(derivs, -1, segment_idx + 1).squeeze(-1)
-        x0 = torch.gather(knots_xcoords, -1, segment_idx).squeeze(-1)
-        y0 = torch.gather(knots_ycoords, -1, segment_idx).squeeze(-1)
+        w = torch.gather(widths, -1, ix)
+        h = torch.gather(heights, -1, ix)
+        d0 = torch.gather(derivs, -1, ix)
+        d1 = torch.gather(derivs, -1, ix + 1)
+        X0 = torch.gather(knots_xcoords, -1, ix)
+        Y0 = torch.gather(knots_ycoords, -1, ix)
 
         s = h / w
-        s.clamp(1e-4, 1 - 1e-4)  # don't want tiny slopes
+        # s.clamp(1e-4, 1 - 1e-4)  # don't want tiny slopes
 
-        alpha = (x - x0) / w
-        alpha.clamp_(1e-4, 1 - 1e-4)
+        θ = (x - X0) / w
+        # θ.clamp_(1e-4, 1 - 1e-4)
 
-        denominator_recip = torch.reciprocal(
-            s + (d1 + d0 - 2 * s) * alpha * (1 - alpha)
-        )
-
-        beta = (s * alpha.pow(2) + d0 * alpha * (1 - alpha)) * denominator_recip
-        y = y0 + h * beta
+        denominator_recip = torch.reciprocal(s + (d1 + d0 - 2 * s) * θ * (1 - θ))
+        y = Y0 + h * (s * θ.pow(2) + d0 * θ * (1 - θ)) * denominator_recip
 
         gradient = (
             s.pow(2)
-            * (
-                d1 * alpha.pow(2)
-                + 2 * s * alpha * (1 - alpha)
-                + d0 * (1 - alpha).pow(2)
-            )
+            * (d1 * θ.pow(2) + 2 * s * θ * (1 - θ) + d0 * (1 - θ).pow(2))
             * denominator_recip.pow(2)
         )
 
@@ -232,11 +230,8 @@ class RQSplineTransform:
     def __call__(self, x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
         return self.forward(x, params)
 
-    def visualise(self, params: Tensor) -> plt.Figure:
-        assert params.dim() == 2
 
-
-class RQSplineTransformCircularDomain(RQSplineTransform):
+class CircularRQSplineTransform(RQSplineTransform):
     """
     Rational quadratic spline transformation on the circle.
     """
@@ -250,9 +245,13 @@ class RQSplineTransformCircularDomain(RQSplineTransform):
 
     @staticmethod
     def pad_derivs(derivs: Tensor) -> Tensor:
-        return F.pad(derivs.flatten(1, -2), (0, 1), "circular").view(
-            *derivs.shape[:-1], -1
-        )
+        return F.pad(derivs.unsqueeze(1), (0, 1), "circular").squeeze(1)
+
+    def forward(self, x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
+        ϕ = circle_vectors_to_angles(x)
+        ϕ, ldj = super().forward(ϕ, params)
+        x = circle_angles_to_vectors(ϕ)
+        return x, ldj
 
 
 class BSplineTransform:

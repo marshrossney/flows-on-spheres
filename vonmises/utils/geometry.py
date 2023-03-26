@@ -7,12 +7,11 @@ from vonmises.utils.torchops import mod_2pi
 Tensor: TypeAlias = torch.Tensor
 
 __all__ = (
-        "circle_vectors_to_angles",
-        "circle_angles_to_vectors",
-        "apply_global_rotation",
-        "spherical_mesh",
+    "circle_vectors_to_angles",
+    "circle_angles_to_vectors",
+    "apply_global_rotation",
+    "spherical_mesh",
 )
-
 
 
 def circle_vectors_to_angles(x: Tensor) -> Tensor:

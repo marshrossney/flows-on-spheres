@@ -11,7 +11,7 @@ import torch.linalg as LA
 
 from vonmises.utils import circle_vectors_to_angles
 
-#from utils import spherical_mesh
+# from utils import spherical_mesh
 
 Tensor: TypeAlias = torch.Tensor
 Figure: TypeAlias = plt.Figure
@@ -19,22 +19,34 @@ Figure: TypeAlias = plt.Figure
 sns.set_theme()
 
 
+def scatter(xy: Tensor, **scatter_kwargs) -> Figure:
+    x, y = xy.split(1, dim=-1)
+    fig, ax = plt.subplots()
+    ax.scatter(x, y, **scatter_kwargs)
+    return fig
 
-def scatter2d(xy: Tensor, polar: bool = False, **scatter_kwargs) -> Figure:
-    if polar:
-        r = LA.vector_norm(xy, dim=-1, keepdim=True)
-        ϕ = circle_vectors_to_angles(xy)
-        fig, ax = plt.subplots(subplot_kw={"polar": True})
-        ax.set_ylim([0, 1.1 * r.max()])
-        ax.set_xticklabels([])
-        ax.set_aspect("equal")
-        ax.scatter(ϕ, r, **scatter_kwargs)
-        return fig
-    else:
-        x, y = xy.split(1, dim=-1)
-        fig, ax = plt.subplots()
-        ax.scatter(x, y, **scatter_kwargs)
-        return fig
+
+def circular_scatter(xy: Tensor, **scatter_kwargs) -> Figure:
+    r = LA.vector_norm(xy, dim=-1, keepdim=True)
+    ϕ = circle_vectors_to_angles(xy)
+    fig, ax = plt.subplots(subplot_kw={"polar": True})
+    ax.set_ylim([0, 1.1 * r.max()])
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    ax.set_aspect("equal")
+    ax.scatter(ϕ, r, **scatter_kwargs)
+    return fig
+
+
+def circular_histogram(xy: Tensor, bins: int = 36) -> Figure:
+    ϕ = circle_vectors_to_angles(xy)
+    hist, bin_edges = torch.histogram(ϕ, bins=bins, range=(0, 2 * π), density=True)
+    positions = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    fig, ax = plt.subplots(subplot_kw={"polar": True})
+    ax.bar(positions, hist, width=(2 * π) / bins, bottom=0.01)
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    return fig
 
 
 def pairplot(xyz: Tensor) -> sns.PairGrid:
@@ -92,7 +104,6 @@ def line(xyz: Tensor, projection: str = "aitoff", **plot_kwargs) -> plt.Figure:
     fig.tight_layout()
 
     return fig
-
 
 
 def scatter(

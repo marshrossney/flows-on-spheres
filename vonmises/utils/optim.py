@@ -45,12 +45,13 @@ def Trainer(
         }
 
     if logging:
-        config |= {"logger": TensorBoardLogger(), "val_check_interval": 200},
+        config |= ({"logger": TensorBoardLogger(), "val_check_interval": 200},)
 
     return pl.Trainer(**config)
 
 
 # ------Metrics
+
 
 def metropolis_acceptance(log_weights: Tensor) -> float:
     log_weights = log_weights.tolist()

@@ -13,14 +13,18 @@ import torch
 import torch.linalg as LA
 import torch.nn.functional as F
 
-from vonmises.distributions import VonMisesFisherDensity, VonMisesFisherMixtureDensity, uniform_prior
-from vonmises.transforms import (
-    MobiusMixtureTransform,
-    RQSplineTransform,
-    RQSplineTransformCircularDomain,
-    BSplineTransform,
+from vonmises.distributions import (
+    VonMisesFisherDensity,
+    VonMisesFisherMixtureDensity,
+    uniform_prior,
 )
-from vonmises.utils import apply_global_rotation, mod_2pi, metropolis_acceptance, effective_sample_size
+from vonmises.utils import (
+    apply_global_rotation,
+    circle_vectors_to_angles,
+    mod_2pi,
+    metropolis_acceptance,
+    effective_sample_size,
+)
 
 Tensor: TypeAlias = torch.Tensor
 Module: TypeAlias = torch.nn.Module
@@ -31,7 +35,13 @@ Parameter: TypeAlias = torch.nn.Parameter
 DEFAULT_VAL_BATCH_SIZE = pow(2, 12)
 DEFAULT_TEST_BATCH_SIZE = pow(2, 14)
 
-def make_net(in_features: int, out_features: int, hidden_shape: list[int], activation: str = "Tanh"):
+
+def make_net(
+    in_features: int,
+    out_features: int,
+    hidden_shape: list[int],
+    activation: str = "Tanh",
+):
     layers = [
         torch.nn.Linear(f_in, f_out)
         for f_in, f_out in zip(
@@ -60,9 +70,9 @@ class BaseFlow(pl.LightningModule):
         self.val_batch_size = val_batch_size
         self.test_batch_size = test_batch_size
         self.init_lr = init_lr
-        
+
         self.target = target
-    
+
     def forward_with_forces(self, x_in: Tensor) -> Tensor:
         x_in.requires_grad_(True)
         x_in.grad = None
@@ -76,7 +86,7 @@ class BaseFlow(pl.LightningModule):
         x_in.requires_grad_(False)
         x_in.grad = None
         return force
-        
+
     def training_step(self, inputs: tuple[Tensor, Tensor], *_) -> Tensor:
         x_in, log_p_unif = inputs
         x_out, delta_log_vol = self(x_in)
@@ -141,7 +151,7 @@ class CircularFlow(BaseFlow):
             init_lr=init_lr,
         )
         self.save_hyperparameters()
-        
+
         self.transformer = transformer
         self.transformer_parameters = torch.nn.ParameterList(
             [
@@ -155,22 +165,37 @@ class CircularFlow(BaseFlow):
                 for _ in range(n_layers)
             ]
         )
-        
+
         if self.logger is not None and type(self.logger) is TensorBoardLogger:
             self.logger.log_hyperparams(self.hparams)
-        
+
     def forward(self, inputs: Tensor) -> tuple[Tensor, Tensor]:
         xy = inputs
         ldj_full = torch.zeros(inputs.shape[0], device=inputs.device)
 
         for params, θ in zip(self.transformer_parameters, self.rotations):
             xy, ldj_this = self.transformer(xy, params.expand(*xy.shape[:-1], -1))
-            xy = apply_global_rotation(xy, θ)    
+            xy = apply_global_rotation(xy, θ)
             ldj_full += ldj_this
 
         return xy, ldj_full
-            
-                
+
+    @torch.no_grad()
+    def visualise(self, polar: bool = False) -> "Figure":
+        x_in, log_p_unif = next(self.val_dataloader())
+        x_out, delta_log_vol = self(x_in)
+        log_p_vMF = self.target.compute_log(x_out)
+        p_vMF = self.target.compute(x_out)
+        ϕ = circle_vectors_to_angles(x_out)
+
+        fig, ax = plt.subplots(subplot_kw={"polar": True} if polar else {})
+        ax.set_xlabel(r"$\phi$")
+        ax.set_ylabel("density")
+        ax.scatter(ϕ, (log_p_unif - delta_log_vol).exp(), s=0.4, label="model")
+        ax.scatter(ϕ, p_vMF, s=0.4, label="target")
+        ax.legend()
+        return fig
+
 
 # class RecursiveFlowS2(pl.LightningModule):
 #     def __init__(

@@ -12,6 +12,7 @@ __all__ = (
     "batched_mv",
 )
 
+
 def mod_2pi(angles: Tensor) -> Tensor:
     return torch.remainder(angles, 2 * π)
 
