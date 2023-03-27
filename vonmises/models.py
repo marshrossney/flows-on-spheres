@@ -14,13 +14,8 @@ import torch.linalg as LA
 import torch.nn.functional as F
 
 from vonmises.distributions import Density, uniform_prior
-from vonmises.utils import (
-    apply_global_rotation,
-    circle_vectors_to_angles,
-    mod_2pi,
-    metropolis_acceptance,
-    effective_sample_size,
-)
+from vonmises.geometry import apply_global_rotation, circle_vectors_to_angles
+from vonmises.utils import mod_2pi, metropolis_acceptance, effective_sample_size
 
 Tensor: TypeAlias = torch.Tensor
 Module: TypeAlias = torch.nn.Module
@@ -112,19 +107,37 @@ class BaseFlow(pl.LightningModule):
         log_target_density = self.target.log_density(x_out)
         return x_out, log_model_density, log_target_density
 
-    def forward_with_forces(self, x_in: Tensor) -> Tensor:
-        x_in.requires_grad_(True)
-        x_in.grad = None
-        with torch.enable_grad():
-            x_out, delta_log_vol = self(x_in)
-            log_p_vMF = self.target.compute_log(x_out)
-            log_p_eff = log_p_vMF + delta_log_vol
-            assert S.shape == torch.Size([batch_size])
-            log_p_eff.backward(gradient=torch.ones_like(log_p_eff))
-        force = x_in.grad
-        x_in.requires_grad_(False)
-        x_in.grad = None
-        return force
+    @staticmethod
+    def _hmc_forward_pre_hook(self_, inputs: tuple[Tensor]) -> None:
+        (x,) = inputs
+        x.requires_grad_(True)
+        x.grad = None
+
+    @staticmethod
+    def _hmc_forward_post_hook(
+        self_, inputs: Tensor, outputs: tuple[Tensor, Tensor]
+    ) -> None:
+        (x_in,) = inputs
+        x_out, delta_log_vol = outputs
+        negative_effective_action = self_.target.log_density(x_out) + delta_log_vol
+        negative_effective_action.backward(
+            gradient=torch.ones_like(negative_effective_action)
+        )
+
+    def hmc_mode(self, on: bool = True) -> None:
+        if on:
+            self._hmc_pre_hook = self.register_forward_pre_hook(
+                self._hmc_forward_pre_hook
+            )
+            self._hmc_post_hook = self.register_forward_hook(
+                self._hmc_forward_post_hook
+            )
+        else:
+            try:
+                self._hmc_pre_hook.remove()
+                self._hmc_post_hook.remove()
+            except AttributeError:
+                pass
 
     def train_dataloader(self):
         return uniform_prior(self.target.dim, self.batch_size)

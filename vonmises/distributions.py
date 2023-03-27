@@ -28,6 +28,14 @@ class Density(ABC):
     def log_density(self, x: Tensor) -> Tensor:
         ...
 
+    @abstractmethod
+    def grad_density(self, x: Tensor) -> Tensor:
+        ...
+
+    @abstractmethod
+    def grad_log_density(self, x: Tensor) -> Tensor:
+        ...
+
 
 class MixtureDensity(Density):
     def __init__(
@@ -59,6 +67,15 @@ class MixtureDensity(Density):
 
     def log_density(self, x: Tensor) -> Tensor:
         return self.density(x).log()
+
+    def grad_density(self, x: Tensor) -> Tensor:
+        total = torch.zeros(x.shape[0], self.dim, device=x.device)
+        for ρ, f in zip(self.weights, self.components):
+            total += ρ * f.grad_density(x)
+        return total
+
+    def grad_log_density(self, x: Tensor) -> Tensor:
+        return self.grad_density(x).divide(self.density(x).unsqueeze(1))
 
 
 @dataclass
@@ -93,6 +110,14 @@ class VonMisesFisherDensity:
     def log_density(self, x: Tensor) -> Tensor:
         μ = torch.tensor(self.μ, device=x.device)
         return x.mv(μ).mul(self.κ).subtract(self.log_norm)
+
+    def grad_density(self, x: Tensor) -> Tensor:
+        κμ = torch.tensor(self.μ, device=x.device).mul(self.κ)
+        return torch.outer(self.density(x), κμ)
+
+    def grad_log_density(self, x: Tensor) -> Tensor:
+        κμ = torch.tensor(self.μ, device=x.device).mul(self.κ)
+        return κμ
 
 
 def uniform_prior(dim: int, batch_size: int) -> IterableDataset:

@@ -1,20 +1,41 @@
-import math
+from math import exp, pi as π
 from os import PathLike
 from random import random
 from typing import Optional, TypeAlias
 
+import torch
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
-import torch
 
 Tensor: TypeAlias = torch.Tensor
 
-__all__ = (
-    "Trainer",
-    "metropolis_acceptance",
-    "effective_sample_size",
-)
+
+def mod_2pi(angles: Tensor) -> Tensor:
+    return torch.remainder(angles, 2 * π)
+
+
+def batched_dot(x: Tensor, y: Tensor) -> Tensor:
+    return (x * y).sum(dim=-1)
+
+
+def batched_outer(x: Tensor, y: Tensor) -> Tensor:
+    return x.unsqueeze(dim=-2) * y.unsqueeze(dim=-1)
+
+
+def batched_mv(M: Tensor, v: Tensor) -> Tensor:
+    return (M * v.unsqueeze(dim=-2)).sum(dim=-1)
+
+
+# M = torch.rand(3, 3)
+# v = torch.rand(3)
+# res = batched_mv(M.view(1, 3, 3), v.view(1, 3))
+# assert torch.allclose(M @ v, res)
+
+# ---------- Geometry
+
+
+# --------- Training
 
 
 DEFAULT_TRAINER_CONFIG = dict(
@@ -65,7 +86,7 @@ def metropolis_acceptance(log_weights: Tensor) -> float:
         if proposal > current:
             current = proposal
             idx += 1
-        elif random() < min(1, math.exp(proposal - current)):
+        elif random() < min(1, exp(proposal - current)):
             current = proposal
             idx += 1
 

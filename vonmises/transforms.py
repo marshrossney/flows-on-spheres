@@ -7,7 +7,7 @@ import torch
 import torch.nn.functional as F
 import torch.linalg as LA
 
-from vonmises.utils.geometry import circle_vectors_to_angles, circle_angles_to_vectors
+from vonmises.geometry import circle_vectors_to_angles, circle_angles_to_vectors
 
 Tensor: TypeAlias = torch.Tensor
 
@@ -56,7 +56,7 @@ class MobiusMixtureTransform:
             omega.pow(2).sum(dim=-1) < 1
         ), f"{omega.pow(2).sum(dim=-1).abs().max()}"
 
-        x.unsqueeze_(dim=-2)
+        x = x.unsqueeze(dim=-2)
         x_10 = torch.tensor([1.0, 0.0], device=x.device).view(
             *[1 for _ in data_shape], 1, 2
         )
