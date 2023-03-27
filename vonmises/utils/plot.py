@@ -62,7 +62,9 @@ def pairplot(xyz: Tensor) -> sns.PairGrid:
     return grid
 
 
-def heatmap(xyz: Tensor, bins: int = 50, **pcolormesh_kwargs) -> plt.Figure:
+def histogram(
+    xyz: Tensor, bins: int = 50, projection: str = "aitoff", **pcolormesh_kwargs
+) -> plt.Figure:
     x, y, z = xyz.flatten(end_dim=-2).split(1, dim=-1)  # merges all batches
     θϕ = torch.cat([torch.asin(z), torch.atan2(y, x)], dim=-1)
     θ_grid = torch.linspace(-π / 2, π / 2, bins + 1)
@@ -70,18 +72,16 @@ def heatmap(xyz: Tensor, bins: int = 50, **pcolormesh_kwargs) -> plt.Figure:
 
     hist, _ = torch.histogramdd(θϕ, bins=[θ_grid, ϕ_grid], density=True)
 
-    fig, ax = plt.subplots(subplot_kw=dict(projection="mollweide"))
+    fig, ax = plt.subplots(subplot_kw=dict(projection=projection))
     ax.set_yticklabels([])
     ax.set_xticklabels([])
 
-    pcolormesh_kwargs = (
-        dict(cmap="viridis", shading="auto", vmin=0, vmax=1) | pcolormesh_kwargs
-    )
+    pcolormesh_kwargs = dict(cmap="viridis", shading="auto") | pcolormesh_kwargs
 
     ax.pcolormesh(
-        ϕ_grid,
-        θ_grid,
-        hist,
+        C=hist,
+        X=ϕ_grid,
+        Y=θ_grid,
         **pcolormesh_kwargs,
     )
 
@@ -128,7 +128,8 @@ def scatter(
 
     sc = ax.scatter(ϕ, θ, c=colours, **scatter_kwargs)
 
-    fig.colorbar(cmap, ax=ax, shrink=1)
+    if colours is not None:
+        fig.colorbar(cmap, ax=ax, shrink=1)
 
     fig.tight_layout()
 

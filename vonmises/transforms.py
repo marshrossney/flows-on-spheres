@@ -1,5 +1,6 @@
 from itertools import chain
-import math
+from math import pi as π
+from typing import TypeAlias
 
 import matplotlib.pyplot as plt
 import torch
@@ -8,9 +9,7 @@ import torch.linalg as LA
 
 from vonmises.utils.geometry import circle_vectors_to_angles, circle_angles_to_vectors
 
-Tensor = torch.Tensor
-
-PI = math.pi
+Tensor: TypeAlias = torch.Tensor
 
 
 class MobiusMixtureTransform:
@@ -87,7 +86,7 @@ class MobiusMixtureTransform:
             y = torch.cat([g1_rot, g2_rot], dim=-1).squeeze(dim=-2)
             log_delta_vol = vol_factor.log().flatten(start_dim=1).sum(dim=1)
         else:
-            theta = torch.fmod(torch.atan2(g2_rot, g1_rot) + 2 * PI, 2 * PI)
+            theta = torch.fmod(torch.atan2(g2_rot, g1_rot) + 2 * π, 2 * π)
             theta_mean = (rho * theta).sum(dim=-2)
             y = torch.cat([theta_mean.cos(), theta_mean.sin()], dim=-1)
             log_delta_vol = (
@@ -107,9 +106,16 @@ class RQSplineTransform:
     Pointwise rational quadratic spline transformation.
     """
 
-    def __init__(self, interval: tuple[float], n_segments: int) -> None:
-        self.interval = interval
+    def __init__(self, n_segments: int) -> None:
         self.n_segments = n_segments
+
+    @property
+    def lower_boundary(self) -> float:
+        return -1
+
+    @property
+    def upper_boundary(self) -> float:
+        return 1
 
     @property
     def n_knots(self) -> int:
@@ -144,7 +150,7 @@ class RQSplineTransform:
     ) -> tuple[Tensor]:
         """Builds a rational quadratic spline function."""
         # Normalise the widths and heights to the interval
-        interval_size = self.interval[1] - self.interval[0]
+        interval_size = self.upper_boundary - self.lower_boundary
         widths = torch.nn.functional.softmax(widths, dim=-1).mul(interval_size)
         heights = torch.nn.functional.softmax(heights, dim=-1).mul(interval_size)
 
@@ -161,7 +167,7 @@ class RQSplineTransform:
                 torch.cumsum(widths, dim=-1),
             ),
             dim=-1,
-        ).add(self.interval[0])
+        ).add(self.lower_boundary)
 
         knots_ycoords = torch.cat(
             (
@@ -169,7 +175,7 @@ class RQSplineTransform:
                 torch.cumsum(heights, dim=-1),
             ),
             dim=-1,
-        ).add(self.interval[0])
+        ).add(self.lower_boundary)
 
         return widths, heights, derivs, knots_xcoords, knots_ycoords
 
@@ -237,7 +243,15 @@ class CircularRQSplineTransform(RQSplineTransform):
     """
 
     def __init__(self, n_segments: int):
-        super().__init__((0, 2 * PI), n_segments)
+        super().__init__(n_segments)
+
+    @property
+    def lower_boundary(self) -> float:
+        return 0
+
+    @property
+    def upper_boundary(self) -> float:
+        return 2 * π
 
     @property
     def n_knots(self) -> int:
@@ -255,9 +269,16 @@ class CircularRQSplineTransform(RQSplineTransform):
 
 
 class BSplineTransform:
-    def __init__(self, interval: tuple[float], n_segments: int) -> None:
-        self.interval = interval
+    def __init__(self, n_segments: int) -> None:
         self.n_segments = n_segments
+
+    @property
+    def lower_boundary(self) -> float:
+        return -1
+
+    @property
+    def upper_boundary(self) -> float:
+        return 1
 
     @property
     def identity_params(self) -> Tensor:
@@ -303,8 +324,7 @@ class BSplineTransform:
     def forward(self, x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
         x = x.contiguous()
 
-        x = x - self.interval[0]
-        x = x / (self.interval[1] - self.interval[0])
+        x = (x - self.lower_boundary) / (self.upper_boundary - self.lower_boundary)
 
         intervals, weights = params.split(
             (self.n_segments, self.n_segments + 2),
@@ -312,16 +332,16 @@ class BSplineTransform:
         )
         Δ, ρ, ω, X, Y = self.build_spline(intervals, weights)
 
-        ix = torch.searchsorted(X, x.unsqueeze(-1), side="right")
+        ix = torch.searchsorted(X, x, side="right")
         ix.clamp_(1, self.n_segments)
 
         # Get parameters of the segments that x falls in
-        Δ = torch.gather(Δ, -1, ix).squeeze(-1)
-        ρ = torch.gather(ρ, -1, ix).squeeze(-1)
-        ωi = torch.gather(ω, -1, ix).squeeze(-1)
-        ωim1 = torch.gather(ω, -1, ix - 1).squeeze(-1)
-        x0 = torch.gather(X, -1, ix - 1).squeeze(-1)
-        y0 = torch.gather(Y, -1, ix - 1).squeeze(-1)
+        Δ = torch.gather(Δ, -1, ix)
+        ρ = torch.gather(ρ, -1, ix)
+        ωi = torch.gather(ω, -1, ix)
+        ωim1 = torch.gather(ω, -1, ix - 1)
+        x0 = torch.gather(X, -1, ix - 1)
+        y0 = torch.gather(Y, -1, ix - 1)
 
         θ = (x - x0) / Δ
 
@@ -347,8 +367,7 @@ class BSplineTransform:
 
         ldj = gradient.log().flatten(start_dim=1).sum(dim=1)
 
-        y = y * (self.interval[1] - self.interval[0])
-        y = y + self.interval[0]
+        y = y * (self.upper_boundary - self.lower_boundary) + self.lower_boundary
 
         return y, ldj
 
