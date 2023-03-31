@@ -1,0 +1,24 @@
+target:
+  class_path: vonmises.distributions.VonMisesFisherMixtureDensity
+  init_args:
+    κ: [5, 10, 15]
+    μ: [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    weights: [1, 1, 1]
+
+flow:
+  class_path: vonmises.flows.RecursiveFlowS2
+  init_args:
+    z_transformer:
+      class_path: vonmises.transforms.BSplineTransform
+      init_args:
+        n_segments: 10
+    xy_transformer:
+      class_path: vonmises.transforms.MobiusMixtureTransform
+      init_args:
+        n_mixture: 10
+        weighted: true
+    n_layers: 1
+    net_hidden_shape: []
+
+steps: 2000
+batch_size: 2000

@@ -1,18 +1,40 @@
-from itertools import chain
+from abc import ABC, abstractmethod
 from math import pi as π
 from typing import TypeAlias
 
-import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
-import torch.linalg as LA
 
-from vonmises.geometry import circle_vectors_to_angles, circle_angles_to_vectors
+from vonmises.geometry import (
+    circle_vectors_to_angles,
+    circle_angles_to_vectors,
+)
 
 Tensor: TypeAlias = torch.Tensor
 
 
-class MobiusMixtureTransform:
+class Transformer(ABC):
+    @property
+    @abstractmethod
+    def identity_params(self) -> Tensor:
+        ...
+
+    @property
+    @abstractmethod
+    def n_params(self) -> int:
+        ...
+
+    @abstractmethod
+    def forward(self, inputs: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
+        ...
+
+    def __call__(
+        self, inputs: Tensor, params: Tensor
+    ) -> tuple[Tensor, Tensor]:
+        return self.forward(inputs, params)
+
+
+class MobiusMixtureTransform(Transformer):
     def __init__(
         self, n_mixture: int, weighted: bool = True, epsilon: float = 1e-3
     ) -> None:
@@ -40,8 +62,14 @@ class MobiusMixtureTransform:
             raise ValueError("Wrong number of parameters provided")
 
         omega = torch.tanh(omega) * (1 - self.epsilon)
+        if omega.isnan().any():
+            print("oh no")
         omega1, omega2 = omega.split(1, dim=-1)
-        omega = torch.cat([omega1, omega2 * (1 - omega1.pow(2)).sqrt()], dim=-1)
+        omega = torch.cat(
+            [omega1, omega2 * (1 - omega1.pow(2)).sqrt()], dim=-1
+        )
+        if omega.isnan().any():
+            print("oh no v2")
 
         return omega, rho
 
@@ -68,7 +96,9 @@ class MobiusMixtureTransform:
 
         one_minus_modsq_omega = 1 - omega.pow(2).sum(dim=-1, keepdim=True)
         modsq_x_minus_omega = (x - omega).pow(2).sum(dim=-1, keepdim=True)
-        modsq_x_10_minus_omega = (x_10 - omega).pow(2).sum(dim=-1, keepdim=True)
+        modsq_x_10_minus_omega = (
+            (x_10 - omega).pow(2).sum(dim=-1, keepdim=True)
+        )
         vol_factor = one_minus_modsq_omega / modsq_x_minus_omega
         vol_factor_10 = one_minus_modsq_omega / modsq_x_10_minus_omega
 
@@ -90,18 +120,19 @@ class MobiusMixtureTransform:
             theta_mean = (rho * theta).sum(dim=-2)
             y = torch.cat([theta_mean.cos(), theta_mean.sin()], dim=-1)
             log_delta_vol = (
-                (rho * vol_factor).sum(dim=-2).log().flatten(start_dim=1).sum(dim=1)
+                (rho * vol_factor)
+                .sum(dim=-2)
+                .log()
+                .flatten(start_dim=1)
+                .sum(dim=1)
             )
 
         assert y.shape == torch.Size([*data_shape, 2])
 
         return y, log_delta_vol
 
-    def __call__(self, x, params):
-        return self.forward(x, params)
 
-
-class RQSplineTransform:
+class RQSplineTransform(Transformer):
     """
     Pointwise rational quadratic spline transformation.
     """
@@ -152,7 +183,9 @@ class RQSplineTransform:
         # Normalise the widths and heights to the interval
         interval_size = self.upper_boundary - self.lower_boundary
         widths = torch.nn.functional.softmax(widths, dim=-1).mul(interval_size)
-        heights = torch.nn.functional.softmax(heights, dim=-1).mul(interval_size)
+        heights = torch.nn.functional.softmax(heights, dim=-1).mul(
+            interval_size
+        )
 
         # Let the derivatives be positive definite
         derivs = torch.nn.functional.softplus(derivs)
@@ -216,7 +249,9 @@ class RQSplineTransform:
         θ = (x - X0) / w
         # θ.clamp_(1e-4, 1 - 1e-4)
 
-        denominator_recip = torch.reciprocal(s + (d1 + d0 - 2 * s) * θ * (1 - θ))
+        denominator_recip = torch.reciprocal(
+            s + (d1 + d0 - 2 * s) * θ * (1 - θ)
+        )
         y = Y0 + h * (s * θ.pow(2) + d0 * θ * (1 - θ)) * denominator_recip
 
         gradient = (
@@ -226,15 +261,13 @@ class RQSplineTransform:
         )
 
         if gradient.less(0.0).any():
-            log.warning("Gradient has negative values")
+            # TODO: log rather than print
+            print("Gradient has negative values")
             gradient = gradient.clamp(min=1e-6)
 
         ldj = gradient.log().flatten(start_dim=1).sum(dim=1)
 
         return y, ldj
-
-    def __call__(self, x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
-        return self.forward(x, params)
 
 
 class CircularRQSplineTransform(RQSplineTransform):
@@ -268,7 +301,7 @@ class CircularRQSplineTransform(RQSplineTransform):
         return x, ldj
 
 
-class BSplineTransform:
+class BSplineTransform(Transformer):
     def __init__(self, n_segments: int) -> None:
         self.n_segments = n_segments
 
@@ -300,9 +333,9 @@ class BSplineTransform:
         )
 
         ω = (ρ[..., 1:] - ρ[..., :-1]) / (Δpad[..., :-1] + Δpad[..., 1:])
-        I = ρ[..., 1:-1] * Δ + (1 / 3) * (ω[..., 1:] - ω[..., :-1]) * Δ**2
+        Int = ρ[..., 1:-1] * Δ + (1 / 3) * (ω[..., 1:] - ω[..., :-1]) * Δ**2
 
-        zeros = torch.zeros_like(I).sum(dim=-1, keepdim=True)
+        zeros = torch.zeros_like(Int).sum(dim=-1, keepdim=True)
 
         X = torch.cat(
             (
@@ -314,7 +347,7 @@ class BSplineTransform:
         Y = torch.cat(
             (
                 zeros,
-                torch.cumsum(I, dim=-1),
+                torch.cumsum(Int, dim=-1),
             ),
             dim=-1,
         )
@@ -324,7 +357,9 @@ class BSplineTransform:
     def forward(self, x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
         x = x.contiguous()
 
-        x = (x - self.lower_boundary) / (self.upper_boundary - self.lower_boundary)
+        x = (x - self.lower_boundary) / (
+            self.upper_boundary - self.lower_boundary
+        )
 
         intervals, weights = params.split(
             (self.n_segments, self.n_segments + 2),
@@ -367,9 +402,9 @@ class BSplineTransform:
 
         ldj = gradient.log().flatten(start_dim=1).sum(dim=1)
 
-        y = y * (self.upper_boundary - self.lower_boundary) + self.lower_boundary
+        y = (
+            y * (self.upper_boundary - self.lower_boundary)
+            + self.lower_boundary
+        )
 
         return y, ldj
-
-    def __call__(self, x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
-        return self.forward(x, params)

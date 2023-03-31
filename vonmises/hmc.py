@@ -1,46 +1,45 @@
 from math import sin, cos, exp
 from random import random
-from typing import TypeAlias, Optional
+from typing import TypeAlias
+
+from tqdm import trange
 
 import torch
 import torch.linalg as LA
 
 from vonmises.distributions import Density, uniform_prior
-from vonmises.models import BaseFlow
+from vonmises.flows import Flow
+from vonmises.model import FlowBasedModel
 
 Tensor: TypeAlias = torch.Tensor
 
-MAX_STEPS = 1e6
 
-
-@torch.no_grad()
 def hmc(
     target: Density,
-    n_traj: int,
+    sample_size: int,
     step_size: float,
     traj_length: float = 1.0,
-) -> Tensor:
+) -> tuple[Tensor, float]:
     ε, T = step_size, traj_length
     D = target.dim
     assert D >= 2
 
     n_accepted = 0
-    sample = torch.empty(n_traj, D + 1)
+    sample = torch.empty(sample_size, D + 1)
 
     x0, _ = next(uniform_prior(D, 1))
-    x0.squeeze_()
 
-    for i in range(n_traj):
+    for i in trange(sample_size):
         x = x0.clone()
 
-        F = target.grad_log_density(x.unsqueeze(0))
-        P = torch.eye(D + 1) - torch.outer(x, x)
+        F = target.grad_log_density(x)
+        P = torch.eye(D + 1) - (x * x.T)
 
         k = torch.empty(D + 1).normal_()
         k = P @ k
 
         # TODO: could replace log_density with action - normalisation not required
-        H0 = (1 / 2) * k.dot(k) - target.log_density(x.unsqueeze(0))
+        H0 = (1 / 2) * k.dot(k) - target.log_density(x)
 
         # Begin leapfrog
 
@@ -54,20 +53,20 @@ def hmc(
             cos_εk = cos(ε * mod_k)
             sin_εk = sin(ε * mod_k)
             x_tmp = cos_εk * x + (1 / mod_k) * sin_εk * k
-            k = -mod_k * sin_εk * x + cos_εk * k
+            k = -mod_k * sin_εk * x.squeeze() + cos_εk * k
             x = x_tmp
 
-            x /= LA.vector_norm(x)
+            x = x / LA.vector_norm(x)
 
-            F = target.grad_log_density(x.unsqueeze(0))
-            P = torch.eye(D + 1) - torch.outer(x, x)
+            F = target.grad_log_density(x)
+            P = torch.eye(D + 1) - (x * x.T)
             k += ε * (P @ F)
 
         k -= (1 / 2) * ε * (P @ F)
 
         # End leapfrog
 
-        HT = (1 / 2) * k.dot(k) - target.log_density(x.unsqueeze(0))
+        HT = (1 / 2) * k.dot(k) - target.log_density(x)
 
         if HT < H0 or exp(H0 - HT) > random():
             n_accepted += 1
@@ -76,44 +75,62 @@ def hmc(
         else:
             sample[i] = x0
 
-    acceptance = n_accepted / n_traj
-    print("acceptance: ", acceptance)  # TODO logging
+    acceptance = n_accepted / sample_size
 
-    return sample
+    return sample, acceptance
+
+
+def add_hooks(module: Flow | FlowBasedModel, target: Density) -> tuple:
+    def forward_pre_hook(module, inputs: tuple[Tensor]) -> None:
+        (x,) = inputs
+        x.requires_grad_(True)
+        x.grad = None
+
+    def forward_post_hook(
+        module, inputs: Tensor, outputs: tuple[Tensor, Tensor]
+    ) -> None:
+        (x_in,) = inputs
+        x_out, delta_log_vol = outputs
+        negative_effective_action = target.log_density(x_out) + delta_log_vol
+        negative_effective_action.backward(
+            gradient=torch.ones_like(negative_effective_action)
+        )
+
+    pre_hook_handle = module.register_forward_pre_hook(forward_pre_hook)
+    post_hook_handle = module.register_forward_hook(forward_post_hook)
+
+    return pre_hook_handle, post_hook_handle
 
 
 @torch.no_grad()
-def flow_hmc(
-    model: BaseFlow,
-    n_traj: int,
+def fhmc(
+    flow: Flow,
+    target: Density,
+    sample_size: int,
     step_size: float,
     traj_length: float = 1.0,
-    target: Optional[Density] = None,
-) -> Tensor:
-       
+) -> tuple[Tensor, float]:
     ε, T = step_size, traj_length
 
-    if target is not None:
-        model.target = target
-    else:
-        target = model.target
-    model.hmc_mode()
-    
-    D = model.target.dim
+    D = target.dim
     assert D >= 2
 
     n_accepted = 0
-    sample = torch.empty(n_traj, D + 1)
+    sample = torch.empty(sample_size, D + 1)
+
+    hooks = add_hooks(flow, target)
 
     z0, _ = next(uniform_prior(D, batch_size=1))
+
     with torch.enable_grad():
-        x0, delta_log_vol = model(z0)
+        x0, delta_log_vol = flow(z0)
     F = z0.grad.squeeze()
 
     assert z0.shape == torch.Size([1, D + 1])
     assert x0.shape == torch.Size([1, D + 1])
 
-    for i in range(n_traj):
+    # TODO annotate progress bar
+    for i in trange(sample_size):
         z = z0.clone()
         x = x0.clone()
 
@@ -141,7 +158,7 @@ def flow_hmc(
             z = z / LA.vector_norm(z)
 
             with torch.enable_grad():
-                x, delta_log_vol = model(z)
+                x, delta_log_vol = flow(z)
             F = z.grad.squeeze()
             P = torch.eye(D + 1) - (z * z.T)
             k += ε * (P @ F)
@@ -159,9 +176,8 @@ def flow_hmc(
         else:
             sample[i] = x0
 
-    model.hmc_mode(False)
+    acceptance = n_accepted / sample_size
 
-    acceptance = n_accepted / n_traj
-    print("acceptance: ", acceptance)  # TODO logging
+    [hook.remove() for hook in hooks]
 
-    return sample
+    return sample, acceptance

@@ -2,8 +2,7 @@
 Classes defining von Mises-Fisher and uniform distributions on the D-spheres.
 """
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from math import exp, gamma, isclose, lgamma, log, pi as π, sqrt
+from math import exp, isclose, lgamma, log, pi as π, sqrt
 from typing import Optional, TypeAlias
 
 import torch
@@ -49,7 +48,9 @@ class MixtureDensity(Density):
         else:
             exp_weights = [exp(weight) for weight in weights]
             sum_exp_weights = sum(exp_weights)
-            self.weights = [exp_weight / sum_exp_weights for exp_weight in exp_weights]
+            self.weights = [
+                exp_weight / sum_exp_weights for exp_weight in exp_weights
+            ]
 
         assert len(set([f.dim for f in components])) == 1
         assert len(self.weights) == len(self.components)
@@ -78,38 +79,38 @@ class MixtureDensity(Density):
         return self.grad_density(x).divide(self.density(x).unsqueeze(1))
 
 
-@dataclass
-class VonMisesFisherDensity:
-    κ: float
-    μ: list[float]
-    dim: int = field(init=False)
-    log_norm: float = field(init=False)
-
-    def __post_init__(self):
-        if self.κ == 0:
+class VonMisesFisherDensity(Density):
+    def __init__(self, κ: float, μ: list[float]):
+        if κ == 0:
             raise ValueError(
                 "κ must be nonzero. For a uniform density please use `CircularUniformDistribuion`"
             )
-        elif self.κ < 0:
+        elif κ < 0:
             raise ValueError("κ must be positive.")
 
-        mod_μ = sqrt(sum([pow(μi, 2) for μi in self.μ]))
-        self.μ = [μi / mod_μ for μi in self.μ]
+        mod_μ = sqrt(sum([pow(μi, 2) for μi in μ]))
+        μ = [μi / mod_μ for μi in μ]
 
-        D = len(self.μ) - 1
+        D = len(μ) - 1
         v = (D - 1) / 2
 
-        self.dim = D
-        self.norm = pow(self.κ, -v) * pow(2 * π, v + 1) * iv(v, self.κ)
-        self.log_norm = log(self.norm)
+        self.κ = κ
+        self.μ = μ
+        self._dim = D
+        self._norm = pow(self.κ, -v) * pow(2 * π, v + 1) * iv(v, self.κ)
+        self._log_norm = log(self._norm)
+
+    @property
+    def dim(self) -> int:
+        return self._dim
 
     def density(self, x: Tensor) -> Tensor:
         μ = torch.tensor(self.μ, device=x.device)
-        return x.mv(μ).mul(self.κ).exp().divide(self.norm)
+        return x.mv(μ).mul(self.κ).exp().divide(self._norm)
 
     def log_density(self, x: Tensor) -> Tensor:
         μ = torch.tensor(self.μ, device=x.device)
-        return x.mv(μ).mul(self.κ).subtract(self.log_norm)
+        return x.mv(μ).mul(self.κ).subtract(self._log_norm)
 
     def grad_density(self, x: Tensor) -> Tensor:
         κμ = torch.tensor(self.μ, device=x.device).mul(self.κ)
@@ -118,6 +119,17 @@ class VonMisesFisherDensity:
     def grad_log_density(self, x: Tensor) -> Tensor:
         κμ = torch.tensor(self.μ, device=x.device).mul(self.κ)
         return κμ
+
+
+class VonMisesFisherMixtureDensity(MixtureDensity):
+    def __init__(
+        self,
+        κ: list[int],
+        μ: list[list[float]],
+        weights: Optional[list[float]] = None,
+    ):
+        components = [VonMisesFisherDensity(κi, μi) for κi, μi in zip(κ, μ)]
+        super().__init__(components, weights)
 
 
 def uniform_prior(dim: int, batch_size: int) -> IterableDataset:
@@ -182,7 +194,9 @@ class SphericalUniformPrior(IterableDataset):
 
 
 def marsaglia(
-    D: int, size: torch.Size = torch.Size([1]), device: Optional[torch.device] = None
+    D: int,
+    size: torch.Size = torch.Size([1]),
+    device: Optional[torch.device] = None,
 ) -> Tensor:
     device = torch.device("cpu") if device is None else device
 
@@ -213,5 +227,7 @@ class HyperSphericalUniformPrior(torch.utils.data.IterableDataset):
 
     def __next__(self):
         x = marsaglia(self.dim, self.shape)
-        log_p = torch.full((self.batch_size,), fill_value=-self.log_surface_area)
+        log_p = torch.full(
+            (self.batch_size,), fill_value=-self.log_surface_area
+        )
         return x, log_p

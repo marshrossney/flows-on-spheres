@@ -10,6 +10,7 @@ import torch
 import torch.linalg as LA
 
 from vonmises.utils import circle_vectors_to_angles
+from vonmises.geometry import spherical_mesh
 
 # from utils import spherical_mesh
 
@@ -40,7 +41,9 @@ def circular_scatter(xy: Tensor, **scatter_kwargs) -> Figure:
 
 def circular_histogram(xy: Tensor, bins: int = 36) -> Figure:
     ϕ = circle_vectors_to_angles(xy)
-    hist, bin_edges = torch.histogram(ϕ, bins=bins, range=(0, 2 * π), density=True)
+    hist, bin_edges = torch.histogram(
+        ϕ, bins=bins, range=(0, 2 * π), density=True
+    )
     positions = 0.5 * (bin_edges[:-1] + bin_edges[1:])
     fig, ax = plt.subplots(subplot_kw={"polar": True})
     ax.bar(positions, hist, width=(2 * π) / bins, bottom=0.01)
@@ -63,7 +66,10 @@ def pairplot(xyz: Tensor) -> sns.PairGrid:
 
 
 def histogram(
-    xyz: Tensor, bins: int = 50, projection: str = "aitoff", **pcolormesh_kwargs
+    xyz: Tensor,
+    bins: int = 50,
+    projection: str = "aitoff",
+    **pcolormesh_kwargs,
 ) -> plt.Figure:
     x, y, z = xyz.flatten(end_dim=-2).split(1, dim=-1)  # merges all batches
     θϕ = torch.cat([torch.asin(z), torch.atan2(y, x)], dim=-1)
@@ -76,7 +82,9 @@ def histogram(
     ax.set_yticklabels([])
     ax.set_xticklabels([])
 
-    pcolormesh_kwargs = dict(cmap="viridis", shading="auto") | pcolormesh_kwargs
+    pcolormesh_kwargs = (
+        dict(cmap="viridis", shading="auto") | pcolormesh_kwargs
+    )
 
     ax.pcolormesh(
         C=hist,
@@ -110,7 +118,7 @@ def scatter(
     xyz: Tensor,
     colours: Optional[Tensor] = None,
     projection: str = "aitoff",
-    **scatter_kwargs
+    **scatter_kwargs,
 ) -> plt.Figure:
     x, y, z = xyz.split(1, dim=-1)
     θ = torch.asin(z)
@@ -118,7 +126,8 @@ def scatter(
 
     if colours is not None:
         cmap = ScalarMappable(
-            norm=Normalize(vmin=colours.min(), vmax=colours.max()), cmap="viridis"
+            norm=Normalize(vmin=colours.min(), vmax=colours.max()),
+            cmap="viridis",
         )
         colours = cmap.to_rgba(colours)
 
@@ -126,7 +135,7 @@ def scatter(
     ax.set_yticklabels([])
     ax.set_xticklabels([])
 
-    sc = ax.scatter(ϕ, θ, c=colours, **scatter_kwargs)
+    ax.scatter(ϕ, θ, c=colours, **scatter_kwargs)
 
     if colours is not None:
         fig.colorbar(cmap, ax=ax, shrink=1)
@@ -138,7 +147,9 @@ def scatter(
 
 def scatter3d(xyz: Tensor, **scatter3D_kwargs) -> plt.Figure:
     fig, ax = plt.subplots(subplot_kw=dict(projection="3d"))
-    ax.plot_surface(*spherical_mesh(25), rstride=1, cstride=1, alpha=0.2, lw=0.1)
+    ax.plot_surface(
+        *spherical_mesh(25), rstride=1, cstride=1, alpha=0.2, lw=0.1
+    )
 
     xyz = xyz.unsqueeze(dim=0).flatten(start_dim=0, end_dim=-3)
     for batch in xyz.split(1, dim=0):
@@ -154,7 +165,9 @@ def scatter3d(xyz: Tensor, **scatter3D_kwargs) -> plt.Figure:
 def line3d(xyz: Tensor, hide_axis: bool = True, **plot3D_kwargs) -> plt.Figure:
     fig, ax = plt.subplots(subplot_kw=dict(projection="3d"))
 
-    ax.plot_surface(*spherical_mesh(25), rstride=1, cstride=1, alpha=0.2, lw=0.1)
+    ax.plot_surface(
+        *spherical_mesh(25), rstride=1, cstride=1, alpha=0.2, lw=0.1
+    )
 
     xyz = xyz.unsqueeze(dim=0).flatten(start_dim=0, end_dim=-3)
     for batch in xyz.split(1, dim=0):

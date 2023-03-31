@@ -1,14 +1,65 @@
-from math import exp, pi as π
-from os import PathLike
-from random import random
+from itertools import chain
+from math import pi as π
 from typing import Optional, TypeAlias
 
 import torch
 import pytorch_lightning as pl
-from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelSummary
 
 Tensor: TypeAlias = torch.Tensor
+
+
+def get_trainer(
+    steps: Optional[int] = None, device: str = "auto"
+) -> pl.Trainer:
+    config = dict(
+        max_epochs=1,
+        accelerator=device,
+        limit_train_batches=steps,
+        limit_val_batches=1,
+        limit_test_batches=1,
+        num_sanity_val_steps=0,
+        logger=False,
+        enable_checkpointing=False,
+        enable_progress_bar=True,
+        enable_model_summary=False,
+        callbacks=[ModelSummary(2)],
+    )
+    return pl.Trainer(**config)
+
+
+def get_tester() -> pl.Trainer:
+    config = dict(
+        max_epochs=1,
+        accelerator="cpu",
+        limit_train_batches=1,  # not for training
+        limit_val_batches=1,
+        limit_test_batches=1,
+        num_sanity_val_steps=0,
+        logger=False,
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+    )
+    return pl.Trainer(**config)
+
+
+def make_net(
+    in_features: int,
+    out_features: int,
+    hidden_shape: list[int],
+    activation: str = "Tanh",
+):
+    layers = [
+        torch.nn.Linear(f_in, f_out)
+        for f_in, f_out in zip(
+            [in_features, *hidden_shape], [*hidden_shape, out_features]
+        )
+    ]
+    activation = getattr(torch.nn, activation)
+    activations = [activation() for _ in hidden_shape] + [torch.nn.Identity()]
+
+    return torch.nn.Sequential(*list(chain(*zip(layers, activations))))
 
 
 def mod_2pi(angles: Tensor) -> Tensor:
@@ -25,80 +76,3 @@ def batched_outer(x: Tensor, y: Tensor) -> Tensor:
 
 def batched_mv(M: Tensor, v: Tensor) -> Tensor:
     return (M * v.unsqueeze(dim=-2)).sum(dim=-1)
-
-
-# M = torch.rand(3, 3)
-# v = torch.rand(3)
-# res = batched_mv(M.view(1, 3, 3), v.view(1, 3))
-# assert torch.allclose(M @ v, res)
-
-# ---------- Geometry
-
-
-# --------- Training
-
-
-DEFAULT_TRAINER_CONFIG = dict(
-    accelerator="auto",
-    check_val_every_n_epoch=None,
-    limit_val_batches=1,
-    limit_test_batches=1,
-    num_sanity_val_steps=0,
-    logger=False,
-    enable_checkpointing=False,
-)
-
-
-def Trainer(
-    steps: int,
-    output_path: Optional[str | PathLike] = None,
-    logging: bool = False,
-) -> pl.Trainer:
-    config = DEFAULT_TRAINER_CONFIG.copy()
-
-    config |= {"max_steps": steps}
-
-    if output_path is not None:
-        config |= {
-            "default_root_dir": output_path,
-            "enable_checkpointing": True,
-            "callbacks": [ModelCheckpoint(save_last=True)],
-        }
-
-    if logging:
-        config |= ({"logger": TensorBoardLogger(), "val_check_interval": 200},)
-
-    return pl.Trainer(**config)
-
-
-# ------Metrics
-
-
-def metropolis_acceptance(log_weights: Tensor) -> float:
-    log_weights = log_weights.tolist()
-    current = log_weights.pop(0)
-
-    idx = 0
-    indices = []
-
-    for proposal in log_weights:
-        # Deal with this case separately to avoid overflow
-        if proposal > current:
-            current = proposal
-            idx += 1
-        elif random() < min(1, exp(proposal - current)):
-            current = proposal
-            idx += 1
-
-        indices.append(idx)
-
-    transitions = set(indices)
-    transitions.discard(0)  # there was no transition *to* 0th state
-
-    return len(transitions) / len(log_weights)
-
-
-def effective_sample_size(log_weights: Tensor) -> float:
-    ess = torch.exp(log_weights.logsumexp(0).mul(2) - log_weights.mul(2).logsumexp(0))
-    ess.div_(len(log_weights))
-    return float(ess)

@@ -14,12 +14,22 @@ seaborn = "^0.12.2"
 jupyterlab = "^3.6.1"
 ipywidgets = "^8.0.4"
 torch = "^1.13.1"
-pytorch-lightning = "^1.9.4"
+pytorch-lightning = "2"
 tensorboard = "^2.12.0"
 black = {extras = ["jupyter"], version = "^23.1.0"}
 scipy = "^1.10.1"
+jsonargparse = "^4.20.1"
+ruamel-yaml = "^0.17.21"
+flake8 = "^6.0.0"
 
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+vmf = "vonmises.scripts.cli:cli"
+
+[tool.black]
+line-length = 79
+target-version = ["py310"]
