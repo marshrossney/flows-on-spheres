@@ -66,14 +66,19 @@ class FlowBasedModel(pl.LightningModule):
         self.log("ess", effective_sample_size(weights))
         self.log("kl_div", weights.mean().negative())
 
-    @torch.no_grad()
-    def sample(self, sample_size: int = 1) -> tuple[Tensor, Tensor, Tensor]:
+    def sample(self, sample_size: int = 1) -> dict[str, Tensor]:
         prior = uniform_prior(self.target.dim, sample_size)
         x_in, log_prior_density = next(prior)
         x_out, delta_log_vol = self(x_in)
         log_model_density = log_prior_density - delta_log_vol
         log_target_density = self.target.log_density(x_out)
-        return x_out, log_model_density, log_target_density
+        return dict(
+                inputs=x_in,
+                outputs=x_out,
+                log_prior_density=log_prior_density,
+                log_model_density=log_model_density,
+                log_target_density=log_target_density,
+        )
 
     def train_dataloader(self):
         return uniform_prior(self.target.dim, self.batch_size)

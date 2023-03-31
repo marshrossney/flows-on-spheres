@@ -80,7 +80,7 @@ def hmc(
     return sample, acceptance
 
 
-def add_hooks(module: Flow | FlowBasedModel, target: Density) -> tuple:
+def add_fhmc_hooks(module: Flow | FlowBasedModel, target: Density) -> tuple:
     def forward_pre_hook(module, inputs: tuple[Tensor]) -> None:
         (x,) = inputs
         x.requires_grad_(True)
@@ -118,7 +118,7 @@ def fhmc(
     n_accepted = 0
     sample = torch.empty(sample_size, D + 1)
 
-    hooks = add_hooks(flow, target)
+    hooks = add_fhmc_hooks(flow, target)
 
     z0, _ = next(uniform_prior(D, batch_size=1))
 

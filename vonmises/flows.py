@@ -13,9 +13,6 @@ Tensor: TypeAlias = torch.Tensor
 Module: TypeAlias = torch.nn.Module
 Parameter: TypeAlias = torch.nn.Parameter
 
-DEFAULT_VAL_BATCH_SIZE = pow(2, 12)
-DEFAULT_TEST_BATCH_SIZE = pow(2, 14)
-
 
 class Flow(Module, ABC):
     @abstractmethod

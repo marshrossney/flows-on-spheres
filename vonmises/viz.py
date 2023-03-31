@@ -9,15 +9,159 @@ import seaborn as sns
 import torch
 import torch.linalg as LA
 
-from vonmises.utils import circle_vectors_to_angles
-from vonmises.geometry import spherical_mesh
-
-# from utils import spherical_mesh
+from vonmises.distributions import uniform_prior
+from vonmises.model import FlowBasedModel
+from vonmises.geometry import spherical_mesh, circle_vectors_to_angles, circle_angles_to_vectors
+from vonmises.hmc import add_fhmc_hooks
 
 Tensor: TypeAlias = torch.Tensor
 Figure: TypeAlias = plt.Figure
 
 sns.set_theme()
+
+DEFAULT_SAMPLE_SIZE = int(1e6)
+
+
+class CircularFlowVisualiser:
+
+    def __init__(self, model: FlowBasedModel, sample_size: int = DEFAULT_SAMPLE_SIZE):
+        assert model.target.dim == 1
+
+        self.model = model.to(device="cpu")
+
+        hooks = add_fhmc_hooks(self.model, self.model.target)
+        sample = self.model.sample(sample_size)
+        [hook.remove() for hook in hooks]
+
+        self.inputs = sample["inputs"]
+        self.input_angles = circle_vectors_to_angles(self.inputs)
+        self.outputs = sample["outputs"]
+        self.output_angles = circle_vectors_to_angles(self.outputs)
+        self.log_prior_density = sample["log_prior_density"]
+        self.log_model_density = sample["log_model_density"]
+        self.log_target_density = sample["log_target_density"]
+        self.forces = self.inputs.grad
+
+        self.linspace_angles = torch.linspace(0, 2 * π, 1000).unsqueeze(-1)
+        self.linspace_vectors = circle_angles_to_vectors(self.linspace_angles)
+        self.linspace_target_density = self.model.target.density(self.linspace_vectors)
+
+    def _get_fig(self) -> Figure:
+        fig, ax = plt.subplots()
+        subplot_kw={"projection": polar} if polar else {})
+
+
+
+    @torch.no_grad()
+    def histogram(self, bins: int = 45):
+        hist, bin_edges = torch.histogram(
+            self.output_angles, bins=bins, range=(0, 2 * π), density=True
+        )
+        positions = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+        fig = plt.figure(figsize=(8, 4))
+        ax = fig.add_subplot(121)
+        ax2 = fig.add_subplot(122, projection="polar")
+        #fig, ax = plt.subplots(subplot_kw={"polar": True})
+        ax.bar(positions, hist, width=(2 * π) / bins, zorder=0, label="data")
+        ax2.bar(positions, hist, width=(2 * π) / bins, bottom=0.01, zorder=0, label="data")
+        ax2.set_xticklabels([])
+        ax2.set_yticklabels([])
+        #ax.set_xticks([])
+        #ax.set_yticks([])
+
+        ax.plot(self.linspace_angles, self.linspace_target_density, color="tab:orange", zorder=1, label="target")
+        ax2.plot(self.linspace_angles, self.linspace_target_density, color="tab:orange", zorder=1, label="target")
+
+        ax.legend()
+        ax2.legend()
+        
+        return fig
+
+
+    @torch.no_grad()
+    def scatter(self):
+        xy, log_model_density, log_target_density = self.model.sample(100000)
+        ϕ = circle_vectors_to_angles(xy)
+
+        fig, ax = plt.subplots()
+        
+        ax.scatter(ϕ, log_model_density, s=0.3, label="model")
+        ax.scatter(ϕ, log_target_density, s=0.3, label="target")
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+
+        ax.legend()
+
+        return fig
+        
+    @torch.no_grad()
+    def scatter_2(self):
+        xy, log_model_density, log_target_density = self.model.sample(100000)
+        ϕ = circle_vectors_to_angles(xy)
+
+        fig, ax = plt.subplots(subplot_kw={"polar": True})
+        
+        ax.scatter(ϕ, log_model_density, s=0.3, label="model")
+        ax.scatter(ϕ, log_target_density, s=0.3, label="target")
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+
+        ax.legend()
+
+        return fig
+
+    @torch.no_grad()
+    def weights(self):
+        xy, log_model_density, log_target_density = self.model.sample(100000)
+        ϕ = circle_vectors_to_angles(xy)
+
+        fig, ax = plt.subplots(subplot_kw={"polar": True})
+        
+        ax.scatter(ϕ, log_model_density - log_target_density, s=0.3, label="weights")
+        ax.set_xticklabels([])
+
+        ax.legend()
+
+        return fig
+
+    def forces(self):
+
+        self._hooks = add_fhmc_hooks(self.model, self.model.target)
+
+        xy, _ = next(uniform_prior(1, 100000))
+        self.model(xy)
+        ϕ = circle_vectors_to_angles(xy)
+
+        forces = xy.grad
+        print(forces.shape)
+
+        f1, f2 = forces.split(1, dim=-1)
+        ϕ = ϕ.detach()
+
+        fig, ax = plt.subplots()#subplot_kw={"polar": True})
+        
+        ax.scatter(ϕ, f1, s=0.3, label="f1")
+        ax.scatter(ϕ, f2, s=0.3, label="f2")
+        ax.set_xticklabels([])
+
+        ax.set_yscale("log")
+
+        ax.legend()
+
+        [hook.remove() for hook in self._hooks]
+
+        return fig
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> Figure:
+        # yield all figures with label
+        ...
+
+    
+
+
 
 
 def scatter(xy: Tensor, **scatter_kwargs) -> Figure:

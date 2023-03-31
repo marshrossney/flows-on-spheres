@@ -2,6 +2,7 @@ from pathlib import Path
 
 from jsonargparse.typing import PositiveInt, PositiveFloat, Path_dw
 import pandas as pd
+from matplotlib.pyplot import Figure
 
 from vonmises.distributions import Density
 from vonmises.flows import Flow
@@ -54,6 +55,25 @@ def test(
         metrics.append({"sample_size": sample_size} | metrics_)
 
     return pd.DataFrame(metrics)
+
+
+def viz(
+    model: Path_dw,
+    sample_size: PositiveInt = pow(2, 14),
+    ) -> dict[Figure]:
+    
+    model_path = Path(model)
+
+    trained_model = FlowBasedModel.load_from_checkpoint(
+        model_path / CHECKPOINT_FNAME, test_sample_size=sample_size
+    )
+
+    dict_of_figs = {}
+
+    # 
+
+    return dict_of_figs
+    
 
 
 def hmc(
