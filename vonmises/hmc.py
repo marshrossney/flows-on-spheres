@@ -80,7 +80,7 @@ def hmc(
     return sample, acceptance
 
 
-def add_fhmc_hooks(module: Flow | FlowBasedModel, target: Density) -> tuple:
+def add_fhmc_hooks(module: Flow, target: Density) -> tuple:
     def forward_pre_hook(module, inputs: tuple[Tensor]) -> None:
         (x,) = inputs
         x.requires_grad_(True)

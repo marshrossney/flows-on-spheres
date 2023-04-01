@@ -29,56 +29,46 @@ class FlowBasedModel(pl.LightningModule):
         self.test_sample_size = test_sample_size
         self.init_lr = init_lr
 
-    def forward(self, inputs: Tensor) -> tuple[Tensor, Tensor]:
-        return self.flow(inputs)
+    def forward(self, inputs: tuple[Tensor, Tensor]) -> dict[str, Tensor]:
+        x_in, log_prior_density = inputs
+        x_out, delta_log_vol = self.flow(x_in)
+        log_model_density = log_prior_density - delta_log_vol
+        log_target_density = self.target.log_density(x_out)
+        return dict(
+            inputs=x_in,
+            outputs=x_out,
+            log_density=log_model_density,
+            log_weights=log_target_density - log_model_density,
+        )
 
     def training_step(self, inputs: tuple[Tensor, Tensor], *_) -> Tensor:
-        x_in, log_prior_density = inputs
-        x_out, delta_log_vol = self(x_in)
-        log_target_density = self.target.log_density(x_out)
-        log_model_density = log_prior_density - delta_log_vol
-        weights = log_target_density - log_model_density
+        outputs = self(inputs)
+        log_weights = outputs["log_weights"]
 
-        kl_div = weights.mean().negative()
+        kl_div = log_weights.mean().negative()
         self.log("loss", kl_div)
 
         return kl_div
 
     def validation_step(self, inputs: tuple[Tensor, Tensor], *_) -> None:
-        x_in, log_prior_density = inputs
-        x_out, delta_log_vol = self(x_in)
-        log_model_density = log_prior_density - delta_log_vol
-        log_target_density = self.target.log_density(x_out)
-        weights = log_target_density - log_model_density
+        outputs = self(inputs)
+        log_weights = outputs["log_weights"]
 
-        self.log("val/acceptance", metropolis_acceptance(weights))
-        self.log("val/ess", effective_sample_size(weights))
-        self.log("val/kl_div", weights.mean().negative())
+        self.log("val/acceptance", metropolis_acceptance(log_weights))
+        self.log("val/ess", effective_sample_size(log_weights))
+        self.log("val/kl_div", log_weights.mean().negative())
 
     def test_step(self, inputs: tuple[Tensor, Tensor], *_) -> None:
-        x_in, log_prior_density = inputs
-        x_out, delta_log_vol = self(x_in)
-        log_model_density = log_prior_density - delta_log_vol
-        log_target_density = self.target.log_density(x_out)
-        weights = log_target_density - log_model_density
+        outputs = self(inputs)
+        log_weights = outputs["log_weights"]
 
-        self.log("acceptance", metropolis_acceptance(weights))
-        self.log("ess", effective_sample_size(weights))
-        self.log("kl_div", weights.mean().negative())
+        self.log("acceptance", metropolis_acceptance(log_weights))
+        self.log("ess", effective_sample_size(log_weights))
+        self.log("kl_div", log_weights.mean().negative())
 
     def sample(self, sample_size: int = 1) -> dict[str, Tensor]:
         prior = uniform_prior(self.target.dim, sample_size)
-        x_in, log_prior_density = next(prior)
-        x_out, delta_log_vol = self(x_in)
-        log_model_density = log_prior_density - delta_log_vol
-        log_target_density = self.target.log_density(x_out)
-        return dict(
-                inputs=x_in,
-                outputs=x_out,
-                log_prior_density=log_prior_density,
-                log_model_density=log_model_density,
-                log_target_density=log_target_density,
-        )
+        return self(next(prior))
 
     def train_dataloader(self):
         return uniform_prior(self.target.dim, self.batch_size)

@@ -60,8 +60,7 @@ def test(
 def viz(
     model: Path_dw,
     sample_size: PositiveInt = pow(2, 14),
-    ) -> dict[Figure]:
-    
+) -> dict[Figure]:
     model_path = Path(model)
 
     trained_model = FlowBasedModel.load_from_checkpoint(
@@ -70,10 +69,9 @@ def viz(
 
     dict_of_figs = {}
 
-    # 
+    #
 
     return dict_of_figs
-    
 
 
 def hmc(

@@ -317,6 +317,10 @@ class BSplineTransform(Transformer):
     def identity_params(self) -> Tensor:
         return torch.ones(self.n_segments * 2 + 2)
 
+    @property
+    def n_params(self) -> int:
+        return 2 * self.n_segments + 2
+
     def build_spline(
         self,
         intervals: Tensor,
