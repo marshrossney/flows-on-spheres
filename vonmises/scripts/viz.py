@@ -21,7 +21,6 @@ CHECKPOINT_FNAME = "trained_model.ckpt"
 def visualise(
     model: Path_dw,
     sample_size: PositiveInt = pow(2, 14),
-    **visualiser_kwargs,
 ) -> dict[str, Figure]:
     model_path = Path(model)
 
@@ -37,7 +36,7 @@ def visualise(
         raise NotImplementedError("Visualisations not implemented for dim > 2")
 
     dict_of_figs = {
-        name: fig for name, fig in visualiser.figures(**visualiser_kwargs)
+        name: fig for name, fig in visualiser.figures()
     }
 
     return dict_of_figs
@@ -52,7 +51,7 @@ parser.add_argument(
     help="path to trained model",
 )
 parser.add_argument(
-    "-n", "--sample_size", type=PositiveInt, default=pow(2, 13)
+    "-n", "--sample_size", type=PositiveInt, default=pow(2, 15)
 )
 
 

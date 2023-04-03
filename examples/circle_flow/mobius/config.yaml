@@ -1,0 +1,18 @@
+target:
+  class_path: vonmises.distributions.VonMisesFisherMixtureDensity
+  init_args:
+    κ: [10, 10, 10, 10]
+    μ: [[1, 1], [1, -1], [-1, -1], [-1, 1]]
+    weights: [1, 1, 1, 1]
+
+flow:
+  class_path: vonmises.flows.CircularFlow
+  init_args:
+    transformer:
+      class_path: vonmises.transforms.MobiusMixtureTransform
+      init_args:
+        n_mixture: 12
+    n_layers: 1
+
+steps: 4000
+batch_size: 4000
