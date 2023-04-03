@@ -1,7 +1,6 @@
 __pycache__
 .ipynb_checkpoints
-tb_logs
 lightning_logs
-checkpoints
-spares
-output
+legacy
+*.ckpt
+*.png
