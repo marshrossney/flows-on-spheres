@@ -7,5 +7,6 @@ To do:
 - [x] Scripts to train models and run Flow-HMC algorithm
 - [ ] Implement [exponential map flows](https://arxiv.org/abs/2002.02428)
 - [ ] Implement [bump layers](https://arxiv.org/abs/2110.00351)
-- [ ] Extend models and sampling to $D > 2$
+- [ ] Extend models, sampling, and some visualisation to $D > 2$
+- [ ] Add documentation and examples
 - [ ] Integrate working models into [torchnf](https://github.com/marshrossney/torchnf) package

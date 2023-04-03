@@ -9,7 +9,6 @@ import torch.linalg as LA
 
 from vonmises.distributions import Density, uniform_prior
 from vonmises.flows import Flow
-from vonmises.model import FlowBasedModel
 
 Tensor: TypeAlias = torch.Tensor
 

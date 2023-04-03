@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from math import pi as π
-from typing import TypeAlias, Callable, Optional
+from typing import TypeAlias, Optional
 
 import torch
 import torch.nn.functional as F

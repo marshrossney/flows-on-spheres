@@ -80,9 +80,9 @@ class MobiusMixtureTransform(Transformer):
 
         omega, rho = self._constrain_parameters(params)
 
-        assert torch.all(
-            omega.pow(2).sum(dim=-1) < 1
-        ), f"{omega.pow(2).sum(dim=-1).abs().max()}"
+        if not torch.all(omega.pow(2).sum(dim=-1) < 1):
+            print(f"Error in omega: {omega.pow(2).sum(dim=-1).abs().max()}")
+            assert False
 
         x = x.unsqueeze(dim=-2)
         x_10 = torch.tensor([1.0, 0.0], device=x.device).view(
