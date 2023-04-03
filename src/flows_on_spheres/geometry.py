@@ -3,7 +3,7 @@ from typing import TypeAlias
 
 import torch
 
-from vonmises.utils import mod_2pi
+from flows_on_spheres.utils import mod_2pi
 
 Tensor: TypeAlias = torch.Tensor
 

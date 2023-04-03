@@ -9,14 +9,14 @@ import seaborn as sns
 import torch
 import torch.linalg as LA
 
-from vonmises.model import FlowBasedModel
-from vonmises.geometry import (
+from flows_on_spheres.model import FlowBasedModel
+from flows_on_spheres.geometry import (
     spherical_mesh,
     circle_vectors_to_angles,
     circle_angles_to_vectors,
     sphere_vectors_to_angles,
 )
-from vonmises.hmc import add_fhmc_hooks
+from flows_on_spheres.hmc import add_fhmc_hooks
 
 Tensor: TypeAlias = torch.Tensor
 Figure: TypeAlias = plt.Figure

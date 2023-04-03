@@ -4,9 +4,9 @@ import pytorch_lightning as pl
 import torch
 from jsonargparse.typing import PositiveInt, PositiveFloat
 
-from vonmises.flows import Flow
-from vonmises.distributions import Density, uniform_prior
-from vonmises.metrics import metropolis_acceptance, effective_sample_size
+from flows_on_spheres.flows import Flow
+from flows_on_spheres.distributions import Density, uniform_prior
+from flows_on_spheres.metrics import metropolis_acceptance, effective_sample_size
 
 Tensor: TypeAlias = torch.Tensor
 

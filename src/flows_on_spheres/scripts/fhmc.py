@@ -1,12 +1,11 @@
 from pathlib import Path
-from typing import Optional
 
 from jsonargparse import ArgumentParser, Namespace
-from jsonargparse.typing import PositiveInt, PositiveFloat, Path_dw, Path_dc
+from jsonargparse.typing import PositiveInt, PositiveFloat, Path_dw
 import pandas as pd
 
-from vonmises.model import FlowBasedModel
-import vonmises.hmc
+from flows_on_spheres.model import FlowBasedModel
+import flows_on_spheres.hmc
 
 CHECKPOINT_FNAME = "trained_model.ckpt"
 HMC_METRICS_FNAME = "hmc_metrics.csv"
@@ -31,7 +30,7 @@ def fhmc(
 
     metrics = []
     for _ in range(repeat):
-        _, acceptance = vonmises.hmc.fhmc(
+        _, acceptance = flows_on_spheres.hmc.fhmc(
             model.flow,
             model.target,
             sample_size=sample_size,
@@ -45,10 +44,8 @@ def fhmc(
 
 parser = ArgumentParser()
 parser.add_argument(
-    "-m",
-    "--model",
-    type=Optional[Path_dc],
-    default=None,
+    "model",
+    type=Path_dw,
     help="path to trained model",
 )
 parser.add_argument("-n", "--sample_size", type=PositiveInt, required=True)

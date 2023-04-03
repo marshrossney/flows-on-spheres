@@ -1,34 +1,32 @@
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
 [tool.poetry]
-name = "vonmises"
-version = "0.1.0"
-description = ""
+name = "flows_on_spheres"
+version = "0.2.0"
+description = "Experiments with normalising flows on spheres"
 authors = ["marshrossney <17361029+marshrossney@users.noreply.github.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "~3.10"
-ipython = "^8.11.0"
-numpy = "^1.24.2"
 matplotlib = "^3.7.1"
 seaborn = "^0.12.2"
-jupyterlab = "^3.6.1"
-ipywidgets = "^8.0.4"
 torch = "^1.13.1"
 pytorch-lightning = "2"
-tensorboard = "^2.12.0"
-black = {extras = ["jupyter"], version = "^23.1.0"}
 scipy = "^1.10.1"
 jsonargparse = "^4.20.1"
-ruamel-yaml = "^0.17.21"
+ipython = {version = "^8.11.0", optional = true}
+jupyterlab = {version = "^3.6.1", optional = true}
+ipywidgets = {version = "^8.0.4", optional = true}
+
+[tool.poetry.group.dev.dependencies]
+black = {extras = ["jupyter"], version = "^23.1.0"}
 flake8 = "^6.0.0"
 
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
-
 [tool.poetry.scripts]
-vmf = "vonmises.scripts.cli:cli"
+fos = "flows_on_spheres.scripts.cli:cli"
 
 [tool.black]
 line-length = 79

@@ -1,12 +1,11 @@
 from pathlib import Path
-from typing import Optional
 
 from jsonargparse import ArgumentParser, Namespace
-from jsonargparse.typing import PositiveInt, Path_dw, Path_dc
+from jsonargparse.typing import PositiveInt, Path_dw
 import pandas as pd
 
-from vonmises.model import FlowBasedModel
-from vonmises.utils import get_tester
+from flows_on_spheres.model import FlowBasedModel
+from flows_on_spheres.utils import get_tester
 
 CHECKPOINT_FNAME = "trained_model.ckpt"
 METRICS_FNAME = "metrics.csv"
@@ -14,7 +13,7 @@ METRICS_FNAME = "metrics.csv"
 
 def test(
     model: Path_dw,
-    sample_size: PositiveInt = pow(2, 14),
+    sample_size: PositiveInt,
     repeat: PositiveInt = 1,
 ) -> pd.DataFrame:
     model_path = Path(model)
@@ -37,15 +36,11 @@ parser = ArgumentParser()
 # NOTE: this would be nice but prevents use of flags -m -n -r
 # test_parser.add_function_arguments(test, nested_key=None, as_group=False)
 parser.add_argument(
-    "-m",
-    "--model",
-    type=Optional[Path_dc],
-    default=None,
+    "model",
+    type=Path_dw,
     help="path to trained model",
 )
-parser.add_argument(
-    "-n", "--sample_size", type=PositiveInt, default=pow(2, 14)
-)
+parser.add_argument("-n", "--sample_size", type=PositiveInt, default=100000)
 parser.add_argument("-r", "--repeat", type=PositiveInt, default=1)
 
 

@@ -5,7 +5,7 @@ from typing import TypeAlias
 import torch
 import torch.nn.functional as F
 
-from vonmises.geometry import (
+from flows_on_spheres.geometry import (
     circle_vectors_to_angles,
     circle_angles_to_vectors,
 )

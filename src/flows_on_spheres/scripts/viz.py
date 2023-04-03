@@ -1,14 +1,13 @@
 import logging
 from pathlib import Path
-from typing import Optional
 
 from jsonargparse import ArgumentParser, Namespace
-from jsonargparse.typing import PositiveInt, Path_dw, Path_dc
+from jsonargparse.typing import PositiveInt, Path_dw
 from matplotlib.pyplot import Figure
 
-from vonmises.model import FlowBasedModel
-from vonmises.visualise import (
-        # Visualiser,  # TODO: decide whether it's worth making this class configurable
+from flows_on_spheres.model import FlowBasedModel
+from flows_on_spheres.visualise import (
+    # Visualiser,  # TODO: decide whether it's worth making this class configurable
     CircularFlowVisualiser,
     SphericalFlowVisualiser,
 )
@@ -20,7 +19,7 @@ CHECKPOINT_FNAME = "trained_model.ckpt"
 
 def visualise(
     model: Path_dw,
-    sample_size: PositiveInt = pow(2, 14),
+    sample_size: PositiveInt,
 ) -> dict[str, Figure]:
     model_path = Path(model)
 
@@ -35,24 +34,18 @@ def visualise(
     else:
         raise NotImplementedError("Visualisations not implemented for dim > 2")
 
-    dict_of_figs = {
-        name: fig for name, fig in visualiser.figures()
-    }
+    dict_of_figs = {name: fig for name, fig in visualiser.figures()}
 
     return dict_of_figs
 
 
 parser = ArgumentParser()
 parser.add_argument(
-    "-m",
-    "--model",
-    type=Optional[Path_dc],
-    default=None,
+    "model",
+    type=Path_dw,
     help="path to trained model",
 )
-parser.add_argument(
-    "-n", "--sample_size", type=PositiveInt, default=pow(2, 15)
-)
+parser.add_argument("-n", "--sample_size", type=PositiveInt, default=100000)
 
 
 def main(config: Namespace):

@@ -7,8 +7,8 @@ from tqdm import trange
 import torch
 import torch.linalg as LA
 
-from vonmises.distributions import Density, uniform_prior
-from vonmises.flows import Flow
+from flows_on_spheres.distributions import Density, uniform_prior
+from flows_on_spheres.flows import Flow
 
 Tensor: TypeAlias = torch.Tensor
 

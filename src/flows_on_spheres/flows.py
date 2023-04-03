@@ -5,9 +5,9 @@ from typing import TypeAlias, Optional
 import torch
 import torch.nn.functional as F
 
-from vonmises.geometry import apply_global_rotation
-from vonmises.utils import make_net
-from vonmises.transforms import Transformer
+from flows_on_spheres.geometry import apply_global_rotation
+from flows_on_spheres.utils import make_net
+from flows_on_spheres.transforms import Transformer
 
 Tensor: TypeAlias = torch.Tensor
 Module: TypeAlias = torch.nn.Module

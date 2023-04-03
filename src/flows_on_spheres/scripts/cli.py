@@ -2,10 +2,10 @@ from typing import Optional
 
 from jsonargparse import ArgumentParser
 
-import vonmises.scripts.train as train
-import vonmises.scripts.test as test
-import vonmises.scripts.fhmc as fhmc
-import vonmises.scripts.viz as viz
+import flows_on_spheres.scripts.train as train
+import flows_on_spheres.scripts.test as test
+import flows_on_spheres.scripts.fhmc as fhmc
+import flows_on_spheres.scripts.viz as viz
 
 
 parser = ArgumentParser(prog="cli")
