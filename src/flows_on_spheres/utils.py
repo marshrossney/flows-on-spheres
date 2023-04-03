@@ -76,3 +76,11 @@ def batched_outer(x: Tensor, y: Tensor) -> Tensor:
 
 def batched_mv(M: Tensor, v: Tensor) -> Tensor:
     return (M * v.unsqueeze(dim=-2)).sum(dim=-1)
+
+
+def batched_vm(v: Tensor, M: Tensor) -> Tensor:
+    return (v.unsqueeze(dim=-1) * M).sum(dim=-2)
+
+
+def batched_mm(M: Tensor, N: Tensor) -> Tensor:
+    return torch.matmul(M, N)

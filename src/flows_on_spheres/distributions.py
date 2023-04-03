@@ -200,7 +200,9 @@ def marsaglia(
 ) -> Tensor:
     device = torch.device("cpu") if device is None else device
 
-    x = torch.empty(*size, D, dtype=torch.float64, device=device).normal_()
+    size = size if hasattr(size, "__len__") else torch.Size([size])
+
+    x = torch.empty(*size, D + 1, dtype=torch.float64, device=device).normal_()
     x.divide_(LA.vector_norm(x, dim=-1, keepdim=True))
 
     # Drop nans and infs

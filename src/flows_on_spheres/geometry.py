@@ -2,10 +2,16 @@ from math import pi as π
 from typing import TypeAlias
 
 import torch
+import torch.linalg as LA
 
 from flows_on_spheres.utils import mod_2pi
 
 Tensor: TypeAlias = torch.Tensor
+
+
+def exponential_map(x: Tensor, v: Tensor) -> Tensor:
+    v_norm = LA.vector_norm(v, dim=-1, keepdim=True)
+    return x * v_norm.cos() + (v / v_norm) * v_norm.sin()
 
 
 def circle_vectors_to_angles(xy: Tensor) -> Tensor:
