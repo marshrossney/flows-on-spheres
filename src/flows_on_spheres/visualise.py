@@ -17,6 +17,7 @@ from flows_on_spheres.geometry import (
     sphere_vectors_to_angles,
 )
 from flows_on_spheres.hmc import add_fhmc_hooks
+from flows_on_spheres.utils import batched_mv, batched_outer
 
 Tensor: TypeAlias = torch.Tensor
 Figure: TypeAlias = plt.Figure
@@ -266,6 +267,13 @@ class SphericalFlowVisualiser(Visualiser):
             self._sample["outputs"]
         )
 
+        x = self._sample["outputs"]
+        F = self._sample["forces"]
+        assert F.shape == x.shape
+        proj = torch.eye(3).view(1, 3, 3) - batched_outer(x, x)
+        forces_proj = batched_mv(proj, F)
+        self._sample["projected_forces"] = forces_proj
+
     def _make_scatter(
         self,
         data: Tensor,
@@ -308,8 +316,13 @@ class SphericalFlowVisualiser(Visualiser):
         ax.scatter(lon, lat, s=3, c=cmap.to_rgba(data))
 
         if topk is not None:
+            maxel = data_topk.max().item()
             ax.scatter(
-                lon_topk, lat_topk, s=3, c="red", label=f"Largest {topk}"
+                lon_topk,
+                lat_topk,
+                s=3,
+                c="red",
+                label=f"Largest {topk}\n(max ~ {maxel:.2g})",
             )
             ax.legend()
 
@@ -365,20 +378,44 @@ class SphericalFlowVisualiser(Visualiser):
         self,
         component: Optional[str] = None,
         coords: str = "outputs",
+        projected: bool = False,
         topk: Optional[int] = None,
     ) -> Figure:
         if component is not None:
             i = dict(x=0, y=1, z=2)[component]
-            data = self._sample["forces"][:, i].abs()
+            data = self._sample[
+                "forces" if not projected else "projected_forces"
+            ][:, i].abs()
             title = (
-                f"Force ({component} component): "
-                + r"$\vert$"
-                + f"$F_{component}$"
-                + r"$\vert$"
+                (
+                    f"Force ({component} component): "
+                    + r"$\vert$"
+                    + f"$F_{component}$"
+                    + r"$\vert$"
+                )
+                if not projected
+                else (
+                    f"Projected force ({component} component): "
+                    + r"$\vert \mathcal{P}$"
+                    + f"$F_{component}$"
+                    + r"$\vert$"
+                )
             )
         else:
-            data = LA.vector_norm(self._sample["forces"], dim=-1)
-            title = "Force: " + r"$\vert \mathbf{F} \vert$"
+            data = LA.vector_norm(
+                self._sample[
+                    "forces" if not projected else "projected_forces"
+                ],
+                dim=-1,
+            )
+            title = (
+                ("Force: " + r"$\vert \mathbf{F} \vert$")
+                if not projected
+                else (
+                    "Projected Force: "
+                    + r"$\vert \mathcal{P} \mathbf{F} \vert$"
+                )
+            )
         return self._make_scatter(data, title, coords, topk=topk)
 
     def forces_quiver(self, coords: str = "outputs", n: int = 1000) -> Figure:
@@ -427,6 +464,18 @@ class SphericalFlowVisualiser(Visualiser):
             yield f"x_force_{coords}", self.force("x", coords, topk=topk)
             yield f"y_force_{coords}", self.force("y", coords, topk=topk)
             yield f"z_force_{coords}", self.force("z", coords, topk=topk)
+            yield f"total_pforce_{coords}", self.force(
+                None, coords, projected=True, topk=topk
+            )
+            yield f"x_pforce_{coords}", self.force(
+                "x", coords, projected=True, topk=topk
+            )
+            yield f"y_pforce_{coords}", self.force(
+                "y", coords, projected=True, topk=topk
+            )
+            yield f"z_pforce_{coords}", self.force(
+                "z", coords, projected=True, topk=topk
+            )
             # yield "forces_quiver", self.forces_quiver(coords)
 
 

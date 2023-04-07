@@ -6,7 +6,10 @@ from jsonargparse.typing import PositiveInt, PositiveFloat
 
 from flows_on_spheres.flows import Flow
 from flows_on_spheres.distributions import Density, uniform_prior
-from flows_on_spheres.metrics import metropolis_acceptance, effective_sample_size
+from flows_on_spheres.metrics import (
+    metropolis_acceptance,
+    effective_sample_size,
+)
 
 Tensor: TypeAlias = torch.Tensor
 
