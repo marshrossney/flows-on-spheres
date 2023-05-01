@@ -1,37 +1,16 @@
-from abc import ABC, abstractmethod
 from math import pi as π
 from typing import TypeAlias
 
 import torch
 import torch.nn.functional as F
 
+from flows_on_spheres.abc import Transformer
 from flows_on_spheres.geometry import (
     circle_vectors_to_angles,
     circle_angles_to_vectors,
 )
 
 Tensor: TypeAlias = torch.Tensor
-
-
-class Transformer(ABC):
-    @property
-    @abstractmethod
-    def identity_params(self) -> Tensor:
-        ...
-
-    @property
-    @abstractmethod
-    def n_params(self) -> int:
-        ...
-
-    @abstractmethod
-    def forward(self, inputs: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
-        ...
-
-    def __call__(
-        self, inputs: Tensor, params: Tensor
-    ) -> tuple[Tensor, Tensor]:
-        return self.forward(inputs, params)
 
 
 class MobiusMixtureTransform(Transformer):

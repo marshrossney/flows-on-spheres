@@ -1,12 +1,16 @@
-from typing import TypeAlias
+from typing import Optional, TypeAlias
 
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelSummary
 import torch
 from jsonargparse.typing import PositiveInt, PositiveFloat
 
-from flows_on_spheres.flows import Flow
-from flows_on_spheres.distributions import Density, uniform_prior
-from flows_on_spheres.metrics import metropolis_acceptance, effective_sample_size
+from flows_on_spheres.abc import Density, Flow
+from flows_on_spheres.prior import uniform_prior
+from flows_on_spheres.metrics import (
+    metropolis_acceptance,
+    effective_sample_size,
+)
 
 Tensor: TypeAlias = torch.Tensor
 
@@ -22,6 +26,8 @@ class FlowBasedModel(pl.LightningModule):
     ):
         super().__init__()
         self.save_hyperparameters()
+
+        assert flow.dim == target.dim
 
         self.flow = flow
         self.target = target
@@ -81,3 +87,38 @@ class FlowBasedModel(pl.LightningModule):
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.init_lr)
+
+
+def get_trainer(
+    steps: Optional[int] = None, device: str = "auto"
+) -> pl.Trainer:
+    config = dict(
+        max_epochs=1,
+        accelerator=device,
+        limit_train_batches=steps,
+        limit_val_batches=1,
+        limit_test_batches=1,
+        num_sanity_val_steps=0,
+        logger=False,
+        enable_checkpointing=False,
+        enable_progress_bar=True,
+        enable_model_summary=False,
+        callbacks=[ModelSummary(2)],
+    )
+    return pl.Trainer(**config)
+
+
+def get_tester() -> pl.Trainer:
+    config = dict(
+        max_epochs=1,
+        accelerator="cpu",
+        limit_train_batches=1,  # not for training
+        limit_val_batches=1,
+        limit_test_batches=1,
+        num_sanity_val_steps=0,
+        logger=False,
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+    )
+    return pl.Trainer(**config)

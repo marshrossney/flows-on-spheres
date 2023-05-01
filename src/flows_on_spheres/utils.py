@@ -1,50 +1,13 @@
 from itertools import chain
 from math import pi as π
-from typing import Optional, TypeAlias
+from typing import TypeAlias
 
 import torch
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelSummary
 
 Tensor: TypeAlias = torch.Tensor
 
 
-def get_trainer(
-    steps: Optional[int] = None, device: str = "auto"
-) -> pl.Trainer:
-    config = dict(
-        max_epochs=1,
-        accelerator=device,
-        limit_train_batches=steps,
-        limit_val_batches=1,
-        limit_test_batches=1,
-        num_sanity_val_steps=0,
-        logger=False,
-        enable_checkpointing=False,
-        enable_progress_bar=True,
-        enable_model_summary=False,
-        callbacks=[ModelSummary(2)],
-    )
-    return pl.Trainer(**config)
-
-
-def get_tester() -> pl.Trainer:
-    config = dict(
-        max_epochs=1,
-        accelerator="cpu",
-        limit_train_batches=1,  # not for training
-        limit_val_batches=1,
-        limit_test_batches=1,
-        num_sanity_val_steps=0,
-        logger=False,
-        enable_checkpointing=False,
-        enable_progress_bar=False,
-        enable_model_summary=False,
-    )
-    return pl.Trainer(**config)
-
-
-def make_net(
+def make_fnn(
     in_features: int,
     out_features: int,
     hidden_shape: list[int],
@@ -66,8 +29,8 @@ def mod_2pi(angles: Tensor) -> Tensor:
     return torch.remainder(angles, 2 * π)
 
 
-def batched_dot(x: Tensor, y: Tensor) -> Tensor:
-    return (x * y).sum(dim=-1)
+def batched_dot(x: Tensor, y: Tensor, keepdim: bool = False) -> Tensor:
+    return (x * y).sum(dim=-1, keepdim=keepdim)
 
 
 def batched_outer(x: Tensor, y: Tensor) -> Tensor:
@@ -76,3 +39,12 @@ def batched_outer(x: Tensor, y: Tensor) -> Tensor:
 
 def batched_mv(M: Tensor, v: Tensor) -> Tensor:
     return (M * v.unsqueeze(dim=-2)).sum(dim=-1)
+
+
+def orthogonal_projection(x: Tensor) -> Tensor:
+    # assert norm of x is 1
+    return torch.eye(x.shape[-1]) - batched_outer(x, x)
+
+
+def project_onto_tangent(v: Tensor, x: Tensor) -> Tensor:
+    return batched_mv(orthogonal_projection(x), v)

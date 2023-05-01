@@ -1,26 +1,22 @@
-from abc import ABC, abstractmethod
 from math import pi as π
 from typing import TypeAlias, Optional
 
 import torch
 import torch.nn.functional as F
 
+from flows_on_spheres.abc import Flow, Transformer
 from flows_on_spheres.geometry import apply_global_rotation
-from flows_on_spheres.utils import make_net
-from flows_on_spheres.transforms import Transformer
+from flows_on_spheres.utils import make_fnn
 
 Tensor: TypeAlias = torch.Tensor
-Module: TypeAlias = torch.nn.Module
 Parameter: TypeAlias = torch.nn.Parameter
 
 
-class Flow(Module, ABC):
-    @abstractmethod
-    def forward(self, inputs: Tensor) -> tuple[Tensor, Tensor]:
-        ...
-
-
 class DummyFlow(Flow):
+    @property
+    def dim(self):
+        return None
+
     def forward(self, inputs: Tensor) -> tuple[Tensor, Tensor]:
         return inputs, torch.zeros(inputs.shape[0], device=inputs.device)
 
@@ -47,6 +43,10 @@ class CircularFlow(Flow):
                 for _ in range(n_layers)
             ]
         )
+
+    @property
+    def dim(self) -> int:
+        return 1
 
     def forward(self, inputs: Tensor) -> tuple[Tensor, Tensor]:
         xy = inputs
@@ -97,7 +97,7 @@ class RecursiveFlowS2(Flow):
         else:
             self.xy_params = torch.nn.ModuleList(
                 [
-                    make_net(
+                    make_fnn(
                         1,
                         xy_transformer.n_params,
                         net_hidden_shape,
@@ -114,6 +114,10 @@ class RecursiveFlowS2(Flow):
                 for _ in range(n_layers)
             ]
         )
+
+    @property
+    def dim(self) -> int:
+        return 2
 
     def forward(self, inputs: Tensor) -> tuple[Tensor, Tensor]:
         xy, z = inputs.split([2, 1], dim=-1)

@@ -4,10 +4,8 @@ from typing import Optional
 from jsonargparse import ArgumentParser, ActionConfigFile, Namespace
 from jsonargparse.typing import PositiveInt, PositiveFloat, Path_dc
 
-from flows_on_spheres.distributions import Density
-from flows_on_spheres.flows import Flow
-from flows_on_spheres.model import FlowBasedModel
-from flows_on_spheres.utils import get_trainer
+from flows_on_spheres.abc import Density, Flow
+from flows_on_spheres.model import FlowBasedModel, get_trainer
 
 CHECKPOINT_FNAME = "trained_model.ckpt"
 CONFIG_FNAME = "config.yaml"

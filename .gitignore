@@ -1,6 +1,2 @@
 __pycache__
-.ipynb_checkpoints
-lightning_logs
-legacy
-*.ckpt
-*.png
+workbench

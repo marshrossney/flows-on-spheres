@@ -1,85 +1,267 @@
-from math import sin, cos, exp
-from random import random
-from typing import TypeAlias
+from math import isclose
+from typing import TypeAlias, Optional, Callable
 
 from tqdm import trange
 
 import torch
 import torch.linalg as LA
 
-from flows_on_spheres.distributions import Density, uniform_prior
-from flows_on_spheres.flows import Flow
+from flows_on_spheres.abc import Density, Flow, Hamiltonian
+from flows_on_spheres.prior import uniform_prior
+from flows_on_spheres.utils import (
+    orthogonal_projection,
+    batched_dot,
+    batched_mv,
+)
 
 Tensor: TypeAlias = torch.Tensor
 
 
-def hmc(
-    target: Density,
-    sample_size: int,
+class HamiltonianGaussianMomenta(Hamiltonian):
+    def __init__(self, target: Density):
+        self.target = target
+
+    @property
+    def dim(self) -> int:
+        return self.target.dim
+
+    def action(self, x: Tensor) -> Tensor:
+        return self.target.log_density(x).negative()
+
+    def hamiltonian(self, x: Tensor, p: Tensor) -> Tensor:
+        return (1 / 2) * batched_dot(p, p) + self.action(x)
+
+    def grad_wrt_p(self, p: Tensor) -> Tensor:
+        return p.clone()
+
+    def grad_wrt_x(self, x: Tensor) -> Tensor:
+        Px = orthogonal_projection(x)
+        grad_action = self.target.grad_log_density(x).negative()
+        return batched_mv(Px, grad_action)
+
+    def sample_momentum(self, x: Tensor) -> None:
+        Px = orthogonal_projection(x)
+        p = torch.empty_like(x).normal_()
+        return batched_mv(Px, p)
+
+
+class HamiltonianCauchyMomenta(Hamiltonian):
+    max_abs_momentum: float = 1e6
+
+    def __init__(self, target: Density, gamma: float):
+        self.target = target
+        self.gamma = gamma
+        self.gamma_sq = gamma**2
+
+    @property
+    def dim(self) -> int:
+        return self.target.dim
+
+    def action(self, x: Tensor) -> Tensor:
+        return self.target.log_density(x).negative()
+
+    def hamiltonian(self, x: Tensor, p: Tensor) -> Tensor:
+        return ((self.dim + 1) / 2) * (
+            1 + batched_dot(p, p) / self.gamma_sq
+        ).log() + self.action(x)
+
+    def grad_wrt_p(self, p: Tensor) -> Tensor:
+        return (
+            (self.dim + 1)
+            / (self.gamma_sq + batched_dot(p, p, keepdim=True))
+            * p
+        )
+
+    def grad_wrt_x(self, x: Tensor) -> Tensor:
+        Px = orthogonal_projection(x)
+        grad_action = self.target.grad_log_density(x).negative()
+        return batched_mv(Px, grad_action)
+
+    def sample_momentum(self, x: Tensor) -> None:
+        Px = orthogonal_projection(x)
+        u = torch.empty_like(x).normal_(0, self.gamma)
+        u = batched_mv(Px, u)
+
+        v = torch.empty(*x.shape[:-1], 1, device=x.device).normal_(0, 1)
+
+        p = (u / v).nan_to_num(
+            posinf=self.max_abs_momentum, neginf=-self.max_abs_momentum
+        )
+
+        return p
+
+
+def leapfrog_integrator(
+    x0: Tensor,
+    p0: Tensor,
+    hamiltonian: Hamiltonian,
     step_size: float,
-    traj_length: float = 1.0,
-) -> tuple[Tensor, float]:
-    ε, T = step_size, traj_length
-    D = target.dim
-    assert D >= 2
+    traj_length: float,
+    on_step_func: Optional[Callable[[Tensor, Tensor, float], None]] = None,
+) -> tuple[Tensor, Tensor, float]:
+    n_steps = max(1, round(traj_length / abs(step_size)))
+    if not isclose(n_steps * step_size, traj_length):
+        # TODO log warn
+        pass
 
-    n_accepted = 0
-    sample = torch.empty(sample_size, D + 1)
+    x = x0.clone()
+    p = p0.clone()
+    t = 0
+    ε = step_size
 
-    x0, _ = next(uniform_prior(D, 1))
+    F = hamiltonian.grad_wrt_x(x).negative()
 
-    for i in trange(sample_size):
-        x = x0.clone()
+    for _ in range(n_steps):
+        if on_step_func is not None:
+            on_step_func(x, p, t)
 
-        F = target.grad_log_density(x)
-        P = torch.eye(D + 1) - (x * x.T)
+        # NOTE: avoid in-place here in case p stored in on_step_func
+        p = p + (ε / 2) * F
 
-        k = torch.empty(D + 1).normal_()
-        k = P @ k
+        v = hamiltonian.grad_wrt_p(p)
 
-        # TODO: could replace log_density with action - normalisation not required
-        H0 = (1 / 2) * k.dot(k) - target.log_density(x)
+        mod_p = LA.vector_norm(p, dim=-1, keepdim=True)
+        mod_v = LA.vector_norm(v, dim=-1, keepdim=True)
+        cos_εv = (ε * mod_v).cos()
+        sin_εv = (ε * mod_v).sin()
 
-        # Begin leapfrog
+        p = cos_εv * p - (sin_εv * mod_p) * x
+        x = cos_εv * x + (sin_εv / mod_v) * v
 
-        k += (1 / 2) * ε * (P @ F)
+        mod_x = LA.vector_norm(x, dim=-1, keepdim=True)
+        x /= mod_x
 
-        t = 0
-        while t < T:
-            t += ε
+        F = hamiltonian.grad_wrt_x(x).negative()
 
-            mod_k = LA.vector_norm(k)
-            cos_εk = cos(ε * mod_k)
-            sin_εk = sin(ε * mod_k)
-            x_tmp = cos_εk * x + (1 / mod_k) * sin_εk * k
-            k = -mod_k * sin_εk * x.squeeze() + cos_εk * k
-            x = x_tmp
+        p += (ε / 2) * F
 
-            x = x / LA.vector_norm(x)
+        t += ε
 
-            F = target.grad_log_density(x)
-            P = torch.eye(D + 1) - (x * x.T)
-            k += ε * (P @ F)
-
-        k -= (1 / 2) * ε * (P @ F)
-
-        # End leapfrog
-
-        HT = (1 / 2) * k.dot(k) - target.log_density(x)
-
-        if HT < H0 or exp(H0 - HT) > random():
-            n_accepted += 1
-            sample[i] = x
-            x0 = x
-        else:
-            sample[i] = x0
-
-    acceptance = n_accepted / sample_size
-
-    return sample, acceptance
+    return x, p, t
 
 
-def add_fhmc_hooks(module: Flow, target: Density) -> tuple:
+class HMCSampler:
+    def __init__(
+        self,
+        hamiltonian: Hamiltonian,
+        step_size: float,
+        traj_length: float = 1.0,
+        n_replicas: int = 1,
+    ) -> None:
+        self.hamiltonian = hamiltonian
+
+        self._traj_length = traj_length
+        self._n_steps = round(traj_length / step_size)
+        self._step_size = traj_length / self._n_steps
+        self._n_replicas = n_replicas
+
+        self._n_traj = 0
+        self._n_accepted = torch.zeros(n_replicas)
+
+        self._delta_H_history = []
+
+        self._current_state, _ = next(
+            uniform_prior(hamiltonian.dim, n_replicas)
+        )
+
+    @property
+    def step_size(self) -> float:
+        return self._step_size
+
+    @property
+    def n_traj(self) -> int:
+        return self._n_traj
+
+    @property
+    def acceptance_rate(self) -> Tensor:
+        return self._n_accepted / self._n_traj
+
+    @property
+    def exp_delta_H(self) -> Tensor:
+        return (
+            torch.stack(self._delta_H_history, dim=0)
+            .negative()
+            .exp()
+            .mean(dim=0)
+        )
+
+    @torch.no_grad()
+    def sample(self, n: int) -> Tensor:
+        x0 = self._current_state
+        outputs = torch.empty(
+            (n, self._n_replicas, self.hamiltonian.dim + 1)
+        ).type_as(x0)
+
+        for i in trange(n):
+            x0 = x0.clone()
+            p0 = self.hamiltonian.sample_momentum(x0)
+            H0 = self.hamiltonian.hamiltonian(x0, p0)
+
+            xT, pT, T = leapfrog_integrator(
+                x0,
+                p0,
+                hamiltonian=self.hamiltonian,
+                step_size=self._step_size,
+                traj_length=self._traj_length,
+            )
+
+            HT = self.hamiltonian.hamiltonian(xT, pT)
+
+            # NOTE: torch.exp(large number) yields 'inf' and
+            # 'inf' > x for float x yields True
+            accepted = (H0 - HT).exp() > torch.rand_like(H0)
+
+            x0[accepted] = xT[accepted]
+
+            self._n_traj += 1
+            self._n_accepted += accepted.int()
+            self._delta_H_history.append(HT - H0)
+
+            outputs[i] = x0
+
+        self._current_state = x0
+
+        return outputs
+
+
+class FlowedDensity(Density):
+    def __init__(self, flow: Flow, target: Density):
+        assert flow.dim == target.dim or flow.dim is None
+
+        self.flow = flow
+        self.target = target
+
+    @property
+    def dim(self) -> int:
+        return self.target.dim
+
+    @torch.no_grad()
+    def density(self, x: Tensor) -> Tensor:
+        fx, ldj = self.flow(x)
+        p_fx = self.target.density(fx)
+        return p_fx * ldj.exp()
+
+    @torch.no_grad()
+    def log_density(self, x: Tensor) -> Tensor:
+        fx, ldj = self.flow(x)
+        return self.target.log_density(fx) + ldj
+
+    def grad_density(self, x: Tensor) -> Tensor:
+        raise NotImplementedError
+
+    @torch.enable_grad()
+    def grad_log_density(self, x: Tensor) -> Tensor:
+        x = x.clone().detach()  # creates a new leaf tensor
+        x.requires_grad_(True)
+        x.grad = None
+        fx, ldj = self.flow(x)
+        log_density_fx = self.target.log_density(fx) + ldj
+        log_density_fx.backward(gradient=torch.ones_like(log_density_fx))
+        grad_log_density = x.grad
+        return grad_log_density
+
+
+def add_hmc_hooks(flow: Flow, target: Density):
     def forward_pre_hook(module, inputs: tuple[Tensor]) -> None:
         (x,) = inputs
         x.requires_grad_(True)
@@ -88,95 +270,12 @@ def add_fhmc_hooks(module: Flow, target: Density) -> tuple:
     def forward_post_hook(
         module, inputs: Tensor, outputs: tuple[Tensor, Tensor]
     ) -> None:
-        (x_in,) = inputs
-        x_out, delta_log_vol = outputs
-        negative_effective_action = target.log_density(x_out) + delta_log_vol
-        negative_effective_action.backward(
-            gradient=torch.ones_like(negative_effective_action)
-        )
+        (x,) = inputs
+        fx, ldj = outputs
+        log_density_fx = target.log_density(fx) + ldj
+        log_density_fx.backward(gradient=torch.ones_like(log_density_fx))
 
-    pre_hook_handle = module.register_forward_pre_hook(forward_pre_hook)
-    post_hook_handle = module.register_forward_hook(forward_post_hook)
+    pre_hook_handle = flow.register_forward_pre_hook(forward_pre_hook)
+    post_hook_handle = flow.register_forward_hook(forward_post_hook)
 
     return pre_hook_handle, post_hook_handle
-
-
-@torch.no_grad()
-def fhmc(
-    flow: Flow,
-    target: Density,
-    sample_size: int,
-    step_size: float,
-    traj_length: float = 1.0,
-) -> tuple[Tensor, float]:
-    ε, T = step_size, traj_length
-
-    D = target.dim
-    assert D >= 2
-
-    n_accepted = 0
-    sample = torch.empty(sample_size, D + 1)
-
-    hooks = add_fhmc_hooks(flow, target)
-
-    z0, _ = next(uniform_prior(D, batch_size=1))
-
-    with torch.enable_grad():
-        x0, delta_log_vol = flow(z0)
-    F = z0.grad.squeeze()
-
-    assert z0.shape == torch.Size([1, D + 1])
-    assert x0.shape == torch.Size([1, D + 1])
-
-    # TODO annotate progress bar
-    for i in trange(sample_size):
-        z = z0.clone()
-        x = x0.clone()
-
-        P = torch.eye(D + 1) - (z * z.T)
-        k = torch.empty(D + 1).normal_()
-        k = P @ k
-
-        H0 = (1 / 2) * k.dot(k) - target.log_density(x) - delta_log_vol
-
-        # Begin leapfrog
-
-        k += (1 / 2) * ε * (P @ F)
-
-        t = 0
-        while t < T:
-            t += ε
-
-            mod_k = LA.vector_norm(k)
-            cos_εk = cos(ε * mod_k)
-            sin_εk = sin(ε * mod_k)
-            z_tmp = cos_εk * z + (1 / mod_k) * sin_εk * k
-            k = -mod_k * sin_εk * z.squeeze() + cos_εk * k
-            z = z_tmp
-
-            z = z / LA.vector_norm(z)
-
-            with torch.enable_grad():
-                x, delta_log_vol = flow(z)
-            F = z.grad.squeeze()
-            P = torch.eye(D + 1) - (z * z.T)
-            k += ε * (P @ F)
-
-        k -= (1 / 2) * ε * (P @ F)
-
-        # End leapfrog
-
-        HT = (1 / 2) * k.dot(k) - target.log_density(x) - delta_log_vol
-
-        if HT < H0 or exp(H0 - HT) > random():
-            n_accepted += 1
-            sample[i] = x
-            x0 = x
-        else:
-            sample[i] = x0
-
-    acceptance = n_accepted / sample_size
-
-    [hook.remove() for hook in hooks]
-
-    return sample, acceptance
