@@ -4,7 +4,12 @@ from typing import TypeAlias
 import torch
 import torch.linalg as LA
 
-from flows_on_spheres.utils import mod_2pi, batched_dot, batched_cross, batched_mv
+from flows_on_spheres.utils import (
+    mod_2pi,
+    batched_dot,
+    batched_cross,
+    batched_mv,
+)
 
 Tensor: TypeAlias = torch.Tensor
 
@@ -33,52 +38,59 @@ def sphere_angles_to_vectors(θϕ: Tensor) -> Tensor:
         dim=-1,
     )
 
+
 def get_rotation_matrix(x: Tensor, y: Tensor) -> Tensor:
-    #norm = lambda v: torch.linalg.vector_norm(v, dim=-1, keepdim=True)
-    #print("|x| ", norm(x))
-    #print("|y| ", norm(y))
+    # norm = lambda v: torch.linalg.vector_norm(v, dim=-1, keepdim=True)
+    # print("|x| ", norm(x))
+    # print("|y| ", norm(y))
 
     xdoty = batched_dot(x, y, keepdim=True)
     xcrossy = batched_cross(x, y)
 
     cosθ = xdoty
     sinθ = LA.vector_norm(xcrossy, dim=-1, keepdim=True)
-    #print("sin2 + cos2 ", sinθ ** 2 + cosθ ** 2)
+    # print("sin2 + cos2 ", sinθ ** 2 + cosθ ** 2)
     zero = torch.zeros_like(xdoty)
     one = torch.ones_like(xdoty)
     G = torch.cat(
-            [
-                cosθ, -sinθ, zero,
-                sinθ, cosθ, zero,
-                zero, zero, one,
-            ],
-            dim=-1,
+        [
+            cosθ,
+            -sinθ,
+            zero,
+            sinθ,
+            cosθ,
+            zero,
+            zero,
+            zero,
+            one,
+        ],
+        dim=-1,
     ).view(*x.shape, 3)
 
-    #print("G[0] ", G[0])
-    #print("det G ", torch.det(G))
+    # print("G[0] ", G[0])
+    # print("det G ", torch.det(G))
 
     rej = y - xdoty * x
-    
+
     u = x
     v = rej / LA.vector_norm(rej, dim=-1, keepdim=True)
     w = xcrossy / sinθ
     F = torch.stack([u, v, w], dim=-2)
     Finv = F.transpose(-2, -1)
-    
-    #print("F[0] ", F[0])
-    #print("det F ", torch.det(F))
-    #print("Finv[0] ", Finv[0])
-    #print("det Finv ", torch.det(Finv))
+
+    # print("F[0] ", F[0])
+    # print("det F ", torch.det(F))
+    # print("Finv[0] ", Finv[0])
+    # print("det Finv ", torch.det(Finv))
 
     R = torch.matmul(Finv, torch.matmul(G, F))
 
-    #print("R[0] ", R[0])
-    #print("det R ", torch.det(R))
+    # print("R[0] ", R[0])
+    # print("det R ", torch.det(R))
 
-    #print("x ", x)
-    #print("y ", y)
-    #print("Rx ", batched_mv(R, x)) 
+    # print("x ", x)
+    # print("y ", y)
+    # print("Rx ", batched_mv(R, x))
 
     return R
 

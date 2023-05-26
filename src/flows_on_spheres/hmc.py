@@ -259,6 +259,7 @@ class FlowedDensity(Density):
         log_density_fx.backward(gradient=torch.ones_like(log_density_fx))
         return x.grad
 
+
 def add_hmc_hooks(flow: Flow, target: Density):
     def forward_pre_hook(module, inputs: tuple[Tensor]) -> None:
         (x,) = inputs

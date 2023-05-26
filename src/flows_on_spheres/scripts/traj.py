@@ -26,8 +26,8 @@ def trajectory(
     cauchy_gamma: Optional[PositiveFloat] = None,
 ) -> dict[str, Figure]:
     target = FlowedDensity(model.flow, model.target)
-    
-    #target = FlowedDensity(DummyFlow(), model.target)
+
+    # target = FlowedDensity(DummyFlow(), model.target)
 
     if cauchy_gamma is None:
         hamiltonian = HamiltonianGaussianMomenta(target)
