@@ -13,6 +13,7 @@ from flows_on_spheres.utils import (
     batched_dot,
     batched_mv,
 )
+from flows_on_spheres.geometry import get_rotation_matrix
 
 Tensor: TypeAlias = torch.Tensor
 
@@ -253,13 +254,10 @@ class FlowedDensity(Density):
     def grad_log_density(self, x: Tensor) -> Tensor:
         x = x.clone().detach()  # creates a new leaf tensor
         x.requires_grad_(True)
-        x.grad = None
         fx, ldj = self.flow(x)
         log_density_fx = self.target.log_density(fx) + ldj
         log_density_fx.backward(gradient=torch.ones_like(log_density_fx))
-        grad_log_density = x.grad
-        return grad_log_density
-
+        return x.grad
 
 def add_hmc_hooks(flow: Flow, target: Density):
     def forward_pre_hook(module, inputs: tuple[Tensor]) -> None:

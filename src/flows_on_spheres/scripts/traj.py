@@ -14,7 +14,7 @@ from flows_on_spheres.hmc import (
 )
 from flows_on_spheres.visualise import TrajectoryVisualiser
 
-# from flows_on_spheres.flows import DummyFlow
+from flows_on_spheres.flows import DummyFlow
 
 CHECKPOINT_FNAME = "trained_model.ckpt"
 
@@ -26,7 +26,8 @@ def trajectory(
     cauchy_gamma: Optional[PositiveFloat] = None,
 ) -> dict[str, Figure]:
     target = FlowedDensity(model.flow, model.target)
-    # target = FlowedDensity(DummyFlow(), model.target)
+    
+    #target = FlowedDensity(DummyFlow(), model.target)
 
     if cauchy_gamma is None:
         hamiltonian = HamiltonianGaussianMomenta(target)

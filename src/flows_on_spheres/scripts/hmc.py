@@ -15,6 +15,8 @@ from flows_on_spheres.hmc import (
 )
 from flows_on_spheres.metrics import integrated_autocorrelation
 
+from flows_on_spheres.flows import DummyFlow
+
 CHECKPOINT_FNAME = "trained_model.ckpt"
 HMC_METRICS_FNAME = "hmc_metrics.csv"
 
@@ -28,6 +30,8 @@ def hmc(
     n_replicas: PositiveInt = 1,
 ) -> pd.DataFrame:
     target = FlowedDensity(model.flow, model.target)
+
+    #target = FlowedDensity(DummyFlow(), model.target)
 
     if cauchy_gamma is None:
         hamiltonian = HamiltonianGaussianMomenta(target)

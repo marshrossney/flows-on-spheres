@@ -31,6 +31,13 @@ class MixtureDensity(Density):
 
         assert len(self.weights) == len(self.components)
         assert isclose(sum(self.weights), 1)
+        assert len(set([component.dim for component in self.components])) == 1
+
+        self._dim = self.components[0].dim
+
+    @property
+    def dim(self) -> int:
+        return self._dim
 
     def density(self, x: Tensor) -> Tensor:
         total = torch.zeros(x.shape[0], device=x.device)

@@ -3,6 +3,7 @@ from math import pi as π
 from typing import TypeAlias
 
 import torch
+import torch.linalg as LA
 
 Tensor: TypeAlias = torch.Tensor
 
@@ -32,6 +33,9 @@ def mod_2pi(angles: Tensor) -> Tensor:
 def batched_dot(x: Tensor, y: Tensor, keepdim: bool = False) -> Tensor:
     return (x * y).sum(dim=-1, keepdim=keepdim)
 
+def batched_cross(x: Tensor, y: Tensor) -> Tensor:
+    return LA.cross(x, y, dim=-1)
+
 
 def batched_outer(x: Tensor, y: Tensor) -> Tensor:
     return x.unsqueeze(dim=-2) * y.unsqueeze(dim=-1)
@@ -43,7 +47,7 @@ def batched_mv(M: Tensor, v: Tensor) -> Tensor:
 
 def orthogonal_projection(x: Tensor) -> Tensor:
     # assert norm of x is 1
-    return torch.eye(x.shape[-1]) - batched_outer(x, x)
+    return torch.eye(x.shape[-1], dtype=x.dtype, device=x.device) - batched_outer(x, x)
 
 
 def project_onto_tangent(v: Tensor, x: Tensor) -> Tensor:
