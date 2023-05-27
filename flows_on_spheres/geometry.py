@@ -4,18 +4,18 @@ from typing import TypeAlias
 import torch
 import torch.linalg as LA
 
-from flows_on_spheres.utils import (
-    mod_2pi,
-    batched_dot,
-    batched_cross,
-    batched_mv,
-)
+from flows_on_spheres.utils import mod_2pi
+from flows_on_spheres.linalg import dot, cross, mv
 
 Tensor: TypeAlias = torch.Tensor
 
 
-def circle_vectors_to_angles(xy: Tensor) -> Tensor:
-    return mod_2pi(torch.atan2(*list(reversed(xy.split(1, dim=-1)))))
+def angle(x: Tensor) -> Tensor:
+    return mod_2pi(torch.atan2(*list(reversed(x.split(1, dim=-1)))))
+
+
+def circle_vectors_to_angles(x: Tensor) -> Tensor:
+    return angle(x)
 
 
 def circle_angles_to_vectors(ϕ: Tensor) -> Tensor:
@@ -44,8 +44,8 @@ def get_rotation_matrix(x: Tensor, y: Tensor) -> Tensor:
     # print("|x| ", norm(x))
     # print("|y| ", norm(y))
 
-    xdoty = batched_dot(x, y, keepdim=True)
-    xcrossy = batched_cross(x, y)
+    xdoty = dot(x, y, keepdim=True)
+    xcrossy = cross(x, y)
 
     cosθ = xdoty
     sinθ = LA.vector_norm(xcrossy, dim=-1, keepdim=True)
@@ -95,17 +95,11 @@ def get_rotation_matrix(x: Tensor, y: Tensor) -> Tensor:
     return R
 
 
-def apply_global_rotation(xy: Tensor, θ: Tensor) -> Tensor:
-    *data_shape, coord_dims = xy.shape
-    assert coord_dims == 2
-    cosθ, sinθ = θ.cos(), θ.sin()
-    # counter-clockwise rotation
-    R = torch.tensor(
-        [[cosθ, -sinθ], [sinθ, cosθ]],
-        device=xy.device,
-    ).view(*[1 for _ in data_shape], 2, 2)
-    xy.unsqueeze_(dim=-2)
-    return (R * xy).sum(dim=-1)
+def rotate_2d(xy: Tensor, θ: Tensor) -> Tensor:
+    *_, coord_dims = xy.shape
+    assert coord_dims == 2, f"{xy.shape}"
+    R = torch.eye(2) * θ.cos() + torch.tensor([[0, -1], [1, 0]]) * θ.sin()
+    return mv(R, xy)
 
 
 def spherical_mesh(n: int) -> Tensor:

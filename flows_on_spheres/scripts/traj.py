@@ -2,32 +2,30 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from jsonargparse import ArgumentParser, Namespace
+from jsonargparse import ArgumentParser, Namespace, ActionYesNo
 from jsonargparse.typing import PositiveFloat, Path_dw
 from matplotlib.pyplot import Figure
+import torch
 
-from flows_on_spheres.model import FlowBasedModel
+from flows_on_spheres.abc import Density, Flow
 from flows_on_spheres.hmc import (
     HamiltonianGaussianMomenta,
     HamiltonianCauchyMomenta,
     FlowedDensity,
 )
 from flows_on_spheres.visualise import TrajectoryVisualiser
-
-from flows_on_spheres.flows import DummyFlow
-
-CHECKPOINT_FNAME = "trained_model.ckpt"
+from flows_on_spheres.scripts import CHECKPOINT_FNAME
 
 
-def trajectory(
-    model: FlowBasedModel,
+def visualise_trajectory(
+    target: Density,
     step_size: PositiveFloat,
     traj_length: PositiveFloat,
+    flow: Optional[Flow] = None,
     cauchy_gamma: Optional[PositiveFloat] = None,
 ) -> dict[str, Figure]:
-    target = FlowedDensity(model.flow, model.target)
-
-    # target = FlowedDensity(DummyFlow(), model.target)
+    if flow is not None:
+        target = FlowedDensity(flow, target)
 
     if cauchy_gamma is None:
         hamiltonian = HamiltonianGaussianMomenta(target)
@@ -53,24 +51,26 @@ parser.add_argument("-T", "--traj_length", type=PositiveFloat, default=1.0)
 parser.add_argument(
     "-g", "--gamma", type=Optional[PositiveFloat], default=None
 )
+parser.add_argument("--dummy", action=ActionYesNo)
 
 
 def main(config: Namespace) -> None:
     model_path = Path(config.model)
-    model = FlowBasedModel.load_from_checkpoint(model_path / CHECKPOINT_FNAME)
 
-    dict_of_figs = trajectory(
-        model=model,
+    flow = torch.load(model_path / CHECKPOINT_FNAME)
+
+    dict_of_figs = visualise_trajectory(
+        flow=None if config.dummy else flow,
+        target=flow.target,
         step_size=config.step_size,
         traj_length=config.traj_length,
         cauchy_gamma=config.gamma,
     )
 
     figures_dir = (
-        model_path
-        / "figures"
-        / f"traj_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    )
+        "dummy_traj_" if config.dummy else "traj_"
+    ) + datetime.now().strftime("%Y%m%d%H%M%S")
+    figures_dir = model_path / "figures" / figures_dir
     figures_dir.mkdir(parents=True, exist_ok=True)
 
     for name, fig in dict_of_figs.items():

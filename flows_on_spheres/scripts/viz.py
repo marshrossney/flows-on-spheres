@@ -4,17 +4,16 @@ from pathlib import Path
 from jsonargparse import ArgumentParser, Namespace
 from jsonargparse.typing import PositiveInt, Path_dw
 from matplotlib.pyplot import Figure
+import torch
 
-from flows_on_spheres.model import FlowBasedModel
 from flows_on_spheres.visualise import (
     # Visualiser,  # TODO: decide whether it's worth making this class configurable
     CircularFlowVisualiser,
     SphericalFlowVisualiser,
 )
+from flows_on_spheres.scripts import CHECKPOINT_FNAME
 
 log = logging.getLogger(__name__)
-
-CHECKPOINT_FNAME = "trained_model.ckpt"
 
 
 def visualise(
@@ -23,14 +22,12 @@ def visualise(
 ) -> dict[str, Figure]:
     model_path = Path(model)
 
-    trained_model = FlowBasedModel.load_from_checkpoint(
-        model_path / CHECKPOINT_FNAME, test_sample_size=sample_size
-    )
+    flow = torch.load(model_path / CHECKPOINT_FNAME)
 
-    if trained_model.target.dim == 1:
-        visualiser = CircularFlowVisualiser(trained_model, sample_size)
-    elif trained_model.target.dim == 2:
-        visualiser = SphericalFlowVisualiser(trained_model, sample_size)
+    if flow.dim == 1:
+        visualiser = CircularFlowVisualiser(flow, flow.target, sample_size)
+    elif flow.dim == 2:
+        visualiser = SphericalFlowVisualiser(flow, flow.target, sample_size)
     else:
         raise NotImplementedError("Visualisations not implemented for dim > 2")
 

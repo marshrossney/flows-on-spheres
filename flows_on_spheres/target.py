@@ -8,12 +8,12 @@ import torch
 from scipy.special import iv
 
 from flows_on_spheres.abc import Density
+from flows_on_spheres.linalg import orthogonal_projection
 
 Tensor: TypeAlias = torch.Tensor
-IterableDataset: TypeAlias = torch.utils.data.IterableDataset
 
 
-class MixtureDensity(Density):
+class _MixtureDensity(Density):
     def __init__(
         self,
         components: list[Density],
@@ -93,14 +93,15 @@ class VonMisesFisherDensity(Density):
 
     def grad_density(self, x: Tensor) -> Tensor:
         κμ = torch.tensor(self.μ, device=x.device, dtype=x.dtype).mul(self.κ)
-        return torch.outer(self.density(x), κμ)
+        gradient = torch.outer(self.density(x), κμ)
+        return orthogonal_projection(gradient, x)
 
     def grad_log_density(self, x: Tensor) -> Tensor:
         κμ = torch.tensor(self.μ, device=x.device, dtype=x.dtype).mul(self.κ)
-        return κμ
+        return orthogonal_projection(κμ, x)
 
 
-class VonMisesFisherMixtureDensity(MixtureDensity):
+class VonMisesFisherMixtureDensity(_MixtureDensity):
     def __init__(
         self,
         κ: list[int],

@@ -34,6 +34,7 @@ def cli(config: Optional[dict] = None):
     elif config.subcommand == "traj":
         traj.main(config.traj)
     elif config.subcommand == "viz":
+        raise NotImplementedError("Still haven't updated this...")
         viz.main(config.viz)
     else:
         raise ValueError("Invalid subcommand")

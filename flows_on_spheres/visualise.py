@@ -8,8 +8,7 @@ import seaborn as sns
 import torch
 import torch.linalg as LA
 
-from flows_on_spheres.abc import Hamiltonian
-from flows_on_spheres.model import FlowBasedModel
+from flows_on_spheres.abc import Flow, Density, Hamiltonian
 from flows_on_spheres.geometry import (
     spherical_mesh,
     circle_vectors_to_angles,
@@ -18,7 +17,7 @@ from flows_on_spheres.geometry import (
 )
 from flows_on_spheres.hmc import leapfrog_integrator, add_hmc_hooks
 from flows_on_spheres.prior import uniform_prior
-from flows_on_spheres.utils import project_onto_tangent, batched_dot
+from flows_on_spheres.linalg import orthogonal_projection, dot
 
 Tensor: TypeAlias = torch.Tensor
 Figure: TypeAlias = plt.Figure
@@ -78,10 +77,10 @@ class TrajectoryVisualiser:
             x0 = torch.tensor(x0).view(1, -1)
             x0 /= LA.vector_norm(x0, dim=1)
         else:
-            x0, _ = next(uniform_prior(self._ham.dim, 1))
+            x0, _ = uniform_prior(self._ham.dim, "cpu")(1)
 
         if p0 is not None:
-            p0 = project_onto_tangent(p0, x0)
+            p0 = orthogonal_projection(p0, x0)
         else:
             p0 = self._ham.sample_momentum(x0)
 
@@ -177,7 +176,7 @@ class TrajectoryVisualiser:
         t = self._data["t"]
         x = torch.cat(self._data["x"], dim=0)
         p = torch.cat(self._data["p"], dim=0)
-        xdotp = batched_dot(x, p)
+        xdotp = dot(x, p)
 
         fig, ax = plt.subplots()
 
@@ -445,13 +444,14 @@ class TrajectoryVisualiser:
 class CircularFlowVisualiser:
     def __init__(
         self,
-        model: FlowBasedModel,
+        flow: Flow,
+        target: Density,
         sample_size: int = int(1e6),
     ):
-        model = model.to(device="cpu")
+        flow = flow.to(device="cpu")
 
-        hooks = add_hmc_hooks(model.flow, model.target)
-        sample = model.sample(sample_size)
+        hooks = add_hmc_hooks(flow, target)
+        sample = flow.sample(sample_size)
         [hook.remove() for hook in hooks]
 
         self._sample = {key: tensor.detach() for key, tensor in sample.items()}
@@ -465,7 +465,7 @@ class CircularFlowVisualiser:
         )
 
         self._linspace_angles = torch.linspace(0, 2 * π, 1000).unsqueeze(-1)
-        self._linspace_target_density = model.target.density(
+        self._linspace_target_density = target.density(
             circle_angles_to_vectors(self._linspace_angles)
         )
 
@@ -651,16 +651,18 @@ class CircularFlowVisualiser:
 class SphericalFlowVisualiser:
     def __init__(
         self,
-        model: FlowBasedModel,
+        flow: Flow,
+        target: Density,
         sample_size: int = int(1e5),
         projection: str = "aitoff",
     ):
-        assert model.target.dim == 2
+        assert flow.dim == 2
+        assert target.dim == 2
 
-        model = model.to(device="cpu")
+        flow.to(device="cpu")
 
-        hooks = add_hmc_hooks(model.flow, model.target)
-        sample = model.sample(sample_size)
+        hooks = add_hmc_hooks(flow, target)
+        sample = flow.sample(sample_size)
         [hook.remove() for hook in hooks]
 
         self._sample = {key: tensor.detach() for key, tensor in sample.items()}
