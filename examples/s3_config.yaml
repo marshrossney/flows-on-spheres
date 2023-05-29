@@ -1,0 +1,22 @@
+target:
+  class_path: VonMisesFisherDensity
+  init_args:
+    κ: 10
+    μ: [1, 0, 0, 0]
+
+flow:
+  class_path: RecursiveFlowSD
+  init_args:
+    transforms:
+      - class_path: RQSplineModule
+        init_args:
+          n_segments: 8
+          circular: false
+      - class_path: MobiusModule
+        init_args:
+          n_mixture: 4
+          net_hidden_shape: []
+      ordering: [1, 2, 3, 4]
+
+steps: 4000
+batch_size: 4000

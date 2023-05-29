@@ -25,6 +25,12 @@ from flows_on_spheres.transforms import (  # noqa: F401
     RQSplineModule,
     ProjectedAffineModule,
 )
+from flows_on_spheres.flows import (
+    CircularFlow,
+    RecursiveFlowS2,
+    RecursiveFlowSD,
+    Composition,
+)  # noqa: F401
 
 
 parser = ArgumentParser()

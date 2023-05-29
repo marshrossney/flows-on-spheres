@@ -9,6 +9,10 @@ def dot(x: Tensor, y: Tensor) -> Tensor:
     return einsum("...i,...i->...", x, y)
 
 
+def dot_keepdim(x: Tensor, y: Tensor) -> Tensor:
+    return dot(x, y).unsqueeze(-1)
+
+
 def outer(x: Tensor, y: Tensor) -> Tensor:
     return einsum("...i,...j->...ij", x, y)
 

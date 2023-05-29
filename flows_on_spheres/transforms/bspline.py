@@ -30,7 +30,9 @@ class _BSplineTransform:
         assert n_coords == 1
 
         i = torch.searchsorted(
-            self.knots_x.expand(n_batch, -1), x, side="right"
+            self.knots_x.expand(n_batch, -1).contiguous(),
+            x.contiguous(),
+            side="right",
         ).clamp(1, len(self.intervals))
 
         # Get parameters of the segments that x falls in

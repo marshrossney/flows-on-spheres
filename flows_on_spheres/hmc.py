@@ -12,6 +12,7 @@ from flows_on_spheres.prior import uniform_prior
 from flows_on_spheres.linalg import (
     orthogonal_projection,
     dot,
+    dot_keepdim,
     norm_keepdim,
 )
 
@@ -39,7 +40,6 @@ class HamiltonianGaussianMomenta(Hamiltonian):
         return p.clone()
 
     def grad_wrt_x(self, x: Tensor) -> Tensor:
-        # print(self.target)
         return self.target.grad_log_density(x).negative()
 
     def sample_momentum(self, x: Tensor) -> None:
@@ -68,7 +68,7 @@ class HamiltonianCauchyMomenta(Hamiltonian):
         ).log() + self.action(x)
 
     def grad_wrt_p(self, p: Tensor) -> Tensor:
-        return (self.dim + 1) / (self.gamma_sq + dot(p, p, keepdim=True)) * p
+        return (self.dim + 1) / (self.gamma_sq + dot_keepdim(p, p)) * p
 
     def grad_wrt_x(self, x: Tensor) -> Tensor:
         return self.target.grad_log_density(x).negative()
@@ -96,9 +96,12 @@ def leapfrog_integrator(
 ) -> tuple[Tensor, Tensor, float]:
     n_steps = max(1, round(traj_length / abs(step_size)))
     if not isclose(n_steps * abs(step_size), traj_length):
-        print(
-            f"Warning: trajectory length will be {n_steps * step_size} which is different from the requested length {traj_length}"
-        )
+        msg = f"Warning: trajectory length will be {n_steps * step_size} which is different from the requested length {traj_length}"
+        log.warn(msg)
+
+    assert p0.dtype == x0.dtype
+    if not x0.dtype == torch.float64:
+        log.warn("Not using 64 bit precision. This may be a problem")
 
     x = x0.clone()
     p = p0.clone()
@@ -132,9 +135,6 @@ def leapfrog_integrator(
 
         # x . F can be larger than 1e-5 for large forces!
         # assert torch.allclose(dot(F, x), torch.zeros(1), atol=1e-5)
-
-        assert x.dtype == torch.float64
-        assert p.dtype == torch.float64
 
         p += (ε / 2) * F
 
@@ -183,39 +183,48 @@ class HMCSampler:
     def exp_delta_H(self) -> Tensor:
         return torch.stack(self._delta_H_history, dim=0).negative().exp()
 
+
     @torch.no_grad()
-    def sample(self, n: int) -> Tensor:
+    def sample(self, n_traj: int, n_therm: int) -> Tensor:
         x0 = self._current_state
         outputs = torch.empty(
-            (n, self._n_replicas, self.hamiltonian.dim + 1)
+            (n_traj, self._n_replicas, self.hamiltonian.dim + 1)
         ).type_as(x0)
 
-        for i in trange(n):
-            x0 = x0.clone()
-            p0 = self.hamiltonian.sample_momentum(x0)
-            H0 = self.hamiltonian.hamiltonian(x0, p0)
+        sampling = False
+        with trange(n_therm + n_traj, desc="Thermalising") as pbar:
 
-            xT, pT, T = leapfrog_integrator(
-                x0,
-                p0,
-                hamiltonian=self.hamiltonian,
-                step_size=self._step_size,
-                traj_length=self._traj_length,
-            )
+            for step in pbar:
+                if step == n_therm:
+                    sampling = True
+                    pbar.set_description_str("Sampling")
 
-            HT = self.hamiltonian.hamiltonian(xT, pT)
+                x0 = x0.clone()
+                p0 = self.hamiltonian.sample_momentum(x0)
+                H0 = self.hamiltonian.hamiltonian(x0, p0)
 
-            # NOTE: torch.exp(large number) yields 'inf' and
-            # 'inf' > x for float x yields True
-            accepted = (H0 - HT).exp() > torch.rand_like(H0)
+                xT, pT, T = leapfrog_integrator(
+                    x0,
+                    p0,
+                    hamiltonian=self.hamiltonian,
+                    step_size=self._step_size,
+                    traj_length=self._traj_length,
+                )
 
-            x0[accepted] = xT[accepted]
+                HT = self.hamiltonian.hamiltonian(xT, pT)
 
-            self._n_traj += 1
-            self._n_accepted += accepted.int()
-            self._delta_H_history.append(HT - H0)
+                # NOTE: torch.exp(large number) yields 'inf' and
+                # 'inf' > x for float x yields True
+                accepted = (H0 - HT).exp() > torch.rand_like(H0)
 
-            outputs[i] = x0
+                x0[accepted] = xT[accepted]
+
+                if sampling:
+                    self._n_traj += 1
+                    self._n_accepted += accepted.int()
+                    self._delta_H_history.append(HT - H0)
+
+                    outputs[step - n_therm] = x0
 
         self._current_state = x0
 

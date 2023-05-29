@@ -112,7 +112,7 @@ class MobiusModule(TransformModule):
         )
         return omega
 
-    def __call__(
+    def forward(
         self, k: Tensor | None = None
     ) -> _MobiusTransform | _MobiusMixtureTransform:
         params = self.params(k)

@@ -77,7 +77,7 @@ class TrajectoryVisualiser:
             x0 = torch.tensor(x0).view(1, -1)
             x0 /= LA.vector_norm(x0, dim=1)
         else:
-            x0, _ = uniform_prior(self._ham.dim, "cpu")(1)
+            x0, _ = uniform_prior(self._ham.dim, "cpu", torch.float64)(1)
 
         if p0 is not None:
             p0 = orthogonal_projection(p0, x0)

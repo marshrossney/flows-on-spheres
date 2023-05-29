@@ -1,3 +1,4 @@
+from abc import ABCMeta, abstractmethod
 from itertools import chain
 from typing import Callable, Optional, TypeAlias
 
@@ -31,7 +32,7 @@ def make_fnn(
     return torch.nn.Sequential(*list(chain(*zip(layers, activations))))
 
 
-class TransformModule(nn.Module):
+class TransformModule(nn.Module, metaclass=ABCMeta):
     def __init__(
         self,
         n_params: int,
@@ -66,6 +67,11 @@ class TransformModule(nn.Module):
     def params(self, k: Tensor | None) -> Tensor:
         return self._get_params(k)
 
+    @property
+    def domain(self) -> str:
+        ...
+
+    @abstractmethod
     def forward(
         self, k: Tensor | None = None
     ) -> Callable[Tensor, tuple[Tensor, Tensor]]:

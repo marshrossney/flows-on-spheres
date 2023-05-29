@@ -56,8 +56,13 @@ class _RQSplineTransform:
             print(inputs[outside_bounds])
             raise ValueError("inputs outside of the spline bounds")
 
+        # NOTE: calling contiguous() just to silence the warning message
+        # don't really care about optimal perf
         i0 = (
-            torch.searchsorted(knots.expand(n_batch, -1), inputs) - 1
+            torch.searchsorted(
+                knots.expand(n_batch, -1).contiguous(), inputs.contiguous()
+            )
+            - 1
         ).clamp_(0, self.n_segments - 1)
         i0_i1 = torch.stack((i0, i0 + 1), dim=0)
 
@@ -160,7 +165,7 @@ class RQSplineModule(TransformModule):
         self.lower_bound = 0 if circular else -1
         self.upper_bound = 2 * π if circular else +1
 
-    def __call__(
+    def forward(
         self, k: Tensor | None = None
     ) -> _RQSplineTransform | _RQSplineTransformCircular:
         params = self.params(k)
@@ -203,6 +208,8 @@ class RQSplineModule(TransformModule):
             dim=-1,
         ).add(self.lower_bound)
         knots_dydx = derivs
+        if not (knots_dydx > 0).all():
+            print(knots_dydx[~(knots_dydx > 0)])
 
         if self.circular:
             return _RQSplineTransformCircular(knots_x, knots_y, knots_dydx)

@@ -189,7 +189,7 @@ class ProjectedAffineModule(TransformModule):
         self.no_shift = no_shift
         self.linear_thresh = linear_thresh
 
-    def __call__(
+    def forward(
         self, k: Tensor | None
     ) -> _ProjectedAffineTransform | _ProjectedAffineMixtureTransform:
         params = self.params(k)

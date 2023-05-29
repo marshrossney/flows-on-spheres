@@ -40,16 +40,11 @@ def sphere_angles_to_vectors(θϕ: Tensor) -> Tensor:
 
 
 def get_rotation_matrix(x: Tensor, y: Tensor) -> Tensor:
-    # norm = lambda v: torch.linalg.vector_norm(v, dim=-1, keepdim=True)
-    # print("|x| ", norm(x))
-    # print("|y| ", norm(y))
-
     xdoty = dot(x, y, keepdim=True)
     xcrossy = cross(x, y)
 
     cosθ = xdoty
     sinθ = LA.vector_norm(xcrossy, dim=-1, keepdim=True)
-    # print("sin2 + cos2 ", sinθ ** 2 + cosθ ** 2)
     zero = torch.zeros_like(xdoty)
     one = torch.ones_like(xdoty)
     G = torch.cat(
@@ -67,8 +62,6 @@ def get_rotation_matrix(x: Tensor, y: Tensor) -> Tensor:
         dim=-1,
     ).view(*x.shape, 3)
 
-    # print("G[0] ", G[0])
-    # print("det G ", torch.det(G))
 
     rej = y - xdoty * x
 
@@ -78,28 +71,21 @@ def get_rotation_matrix(x: Tensor, y: Tensor) -> Tensor:
     F = torch.stack([u, v, w], dim=-2)
     Finv = F.transpose(-2, -1)
 
-    # print("F[0] ", F[0])
-    # print("det F ", torch.det(F))
-    # print("Finv[0] ", Finv[0])
-    # print("det Finv ", torch.det(Finv))
-
     R = torch.matmul(Finv, torch.matmul(G, F))
-
-    # print("R[0] ", R[0])
-    # print("det R ", torch.det(R))
-
-    # print("x ", x)
-    # print("y ", y)
-    # print("Rx ", batched_mv(R, x))
 
     return R
 
 
-def rotate_2d(xy: Tensor, θ: Tensor) -> Tensor:
-    *_, coord_dims = xy.shape
-    assert coord_dims == 2, f"{xy.shape}"
-    R = torch.eye(2) * θ.cos() + torch.tensor([[0, -1], [1, 0]]) * θ.sin()
-    return mv(R, xy)
+def rotate_2d(x: Tensor, θ: Tensor) -> Tensor:
+    # NOTE: for now it is assumed that the last 2 dimensions define the
+    # 2d plane for rotation
+    _, coord_dims = x.shape
+    R = torch.block_diag(
+        torch.eye(coord_dims - 2, device=θ.device),
+        torch.eye(2, device=θ.device) * θ.cos()
+        + torch.tensor([[0, -1], [1, 0]], device=θ.device) * θ.sin(),
+    )
+    return mv(R, x)
 
 
 def spherical_mesh(n: int) -> Tensor:

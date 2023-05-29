@@ -7,7 +7,7 @@ from typing import Callable, TypeAlias
 
 import torch
 
-from torchlft.linalg import norm_keepdim
+from flows_on_spheres.linalg import norm_keepdim
 
 Tensor: TypeAlias = torch.Tensor
 
@@ -48,24 +48,25 @@ def _spherical_uniform(
 
 
 def _hyperspherical_uniform(
-    D: int,
     batch_size: int,
+    dim: int,
     device: str | torch.device,
     dtype: torch.dtype,
 ):
+    D = dim
     x = torch.empty(
-        batch_size, D, dtype=torch.float64, device=device
+        batch_size, D + 1, dtype=torch.float64, device=device
     ).normal_()
     x = x / norm_keepdim(x)
 
     # Drop nans and infs
-    isfinite = x.isfinite().flatten(start_dim=1).all(dim=1)
+    isfinite = x.isfinite().all(dim=1)
     if not isfinite.all():
         x = x[isfinite]
 
     x = x.to(dtype)
 
-    log_surface_area = log(2) + (D / 2) * log(π) - lgamma(D / 2)
+    log_surface_area = log(2) + ((D + 1) / 2) * log(π) - lgamma((D + 1) / 2)
     log_p = torch.full(
         (batch_size,), fill_value=-log_surface_area, device=device, dtype=dtype
     )
@@ -84,5 +85,5 @@ def uniform_prior(
         return partial(_spherical_uniform, device=device, dtype=dtype)
     else:
         return partial(
-            _hyperspherical_uniform, D=dim, device=device, dtype=dtype
+            _hyperspherical_uniform, dim=dim, device=device, dtype=dtype
         )

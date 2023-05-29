@@ -1,0 +1,21 @@
+target:
+  class_path: VonMisesFisherMixtureDensity
+  init_args:
+    κ: [10, 10, 10, 10]
+    μ: 
+      - [1, 0]
+      - [0, 1]
+      - [-1, 0]
+      - [0, -1]
+    weights: [1, 1, 1, 1]
+
+flow:
+  class_path: CircularFlow
+  init_args:
+    transform:
+      class_path: MobiusModule
+      init_args:
+        n_mixture: 12
+
+steps: 1000
+batch_size: 1000

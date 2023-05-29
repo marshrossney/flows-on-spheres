@@ -25,7 +25,7 @@ def visualise_trajectory(
     cauchy_gamma: Optional[PositiveFloat] = None,
 ) -> dict[str, Figure]:
     if flow is not None:
-        target = FlowedDensity(flow, target)
+        target = FlowedDensity(flow, target).to(torch.double)
 
     if cauchy_gamma is None:
         hamiltonian = HamiltonianGaussianMomenta(target)

@@ -41,7 +41,7 @@ def train(
     """
 
     flow = flow.to(device)
-    prior = uniform_prior(target.dim, device=device)
+    prior = uniform_prior(target.dim, device=device, dtype=torch.float32)
     optimizer = torch.optim.Adam(flow.parameters(), lr=init_lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=steps
@@ -88,7 +88,7 @@ def test(
     flow: Flow, target: Density, sample_size: int, repeats: int = 1
 ) -> pd.DataFrame:
     flow = flow.to("cpu")
-    prior = uniform_prior(flow.dim, device="cpu")
+    prior = uniform_prior(flow.dim, device="cpu", dtype=torch.float32)
 
     metrics = []
     for _ in range(repeats):
