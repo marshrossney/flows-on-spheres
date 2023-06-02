@@ -6,6 +6,7 @@ import torch
 from jsonargparse import (
     ArgumentParser,
     ActionConfigFile,
+    ActionYesNo,
     Namespace,
     namespace_to_dict,
 )
@@ -34,7 +35,11 @@ from flows_on_spheres.flows import (
 
 
 parser = ArgumentParser()
-parser.add_function_arguments(train, nested_key=None, as_group=False)
+parser.add_function_arguments(
+    train, nested_key=None, as_group=False, skip=["device", "dtype"]
+)
+parser.add_argument("--cuda", action=ActionYesNo)
+parser.add_argument("--double", action=ActionYesNo)
 parser.add_argument(
     "-o",
     "--output",
@@ -52,6 +57,12 @@ def main(config: Namespace) -> None:
 
     config = namespace_to_dict(config)
     _ = config.pop("config")
+
+    device_dtype = {
+        "device": "cuda" if config.pop("cuda") else "cpu",
+        "dtype": torch.float64 if config.pop("double") else torch.float32,
+    }
+    config |= device_dtype
 
     output = config.pop("output")
     if output is None:

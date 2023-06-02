@@ -94,15 +94,11 @@ def leapfrog_integrator(
     traj_length: float,
     on_step_func: Optional[Callable[[Tensor, Tensor, float], None]] = None,
 ) -> tuple[Tensor, Tensor, float]:
-    n_steps = max(1, round(traj_length / abs(step_size)))
-    if not isclose(n_steps * abs(step_size), traj_length):
-        msg = f"Warning: trajectory length will be {n_steps * step_size} which is different from the requested length {traj_length}"
-        log.warn(msg)
-
     assert p0.dtype == x0.dtype
     if not x0.dtype == torch.float64:
         log.warn("Not using 64 bit precision. This may be a problem")
 
+    n_steps = max(1, round(traj_length / abs(step_size)))
     x = x0.clone()
     p = p0.clone()
     t = 0
@@ -183,7 +179,6 @@ class HMCSampler:
     def exp_delta_H(self) -> Tensor:
         return torch.stack(self._delta_H_history, dim=0).negative().exp()
 
-
     @torch.no_grad()
     def sample(self, n_traj: int, n_therm: int) -> Tensor:
         x0 = self._current_state
@@ -193,7 +188,6 @@ class HMCSampler:
 
         sampling = False
         with trange(n_therm + n_traj, desc="Thermalising") as pbar:
-
             for step in pbar:
                 if step == n_therm:
                     sampling = True

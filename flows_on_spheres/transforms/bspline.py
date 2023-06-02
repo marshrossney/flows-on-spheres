@@ -26,6 +26,8 @@ class _BSplineTransform:
     def __call__(self, x: Tensor) -> tuple[Tensor, Tensor]:
         x = (x + 1) / 2  # rescale [-1, 1] -> [0, 1]
 
+        assert (x.abs() <= 1).all()
+
         n_batch, n_coords = x.shape
         assert n_coords == 1
 
@@ -57,6 +59,9 @@ class _BSplineTransform:
         ldj = dydx.log().sum(dim=1)
 
         y = y * 2 - 1  # rescale [0, 1] -> [-1, 1]
+
+        # NOTE: this seems to be broken somehow.
+        assert (y.abs() <= 1).all(), f"{y.abs().max()}"
 
         return y, ldj
 

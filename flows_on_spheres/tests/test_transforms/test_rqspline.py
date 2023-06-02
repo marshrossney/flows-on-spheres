@@ -5,8 +5,9 @@ import torch
 from torch import allclose
 
 from flows_on_spheres.transforms.rqspline import (
-    _RQSplineTransform,
+    RQSplineTransform,
     RQSplineModule,
+    CircularSplineModule,
 )
 
 SAMPLE_SIZE = 100
@@ -15,7 +16,7 @@ SAMPLE_SIZE = 100
 @pytest.fixture
 def angle_inputs():
     θ = torch.empty(SAMPLE_SIZE, 1).uniform_(0, 2 * π)
-    return torch.cat([θ.cos(), θ.sin()], dim=1)
+    return θ
 
 
 @pytest.fixture
@@ -24,12 +25,14 @@ def interval_inputs():
 
 
 def test_identity():
-    f = _RQSplineTransform(
+    f = RQSplineTransform(
         torch.ones(SAMPLE_SIZE, 10).cumsum(dim=1),
         torch.ones(SAMPLE_SIZE, 10).cumsum(dim=1),
-        torch.ones(SAMPLE_SIZE, 10),
+        torch.zeros(SAMPLE_SIZE, 11),
+        upper_bound=+1.0,
+        lower_bound=-1.0,
     )
-    x = torch.empty(SAMPLE_SIZE, 1).uniform_(1, 10)
+    x = torch.empty(SAMPLE_SIZE, 1).uniform_(-1, 1)
     y, ldj = f(x)
     assert allclose(x, y)
     assert allclose(ldj, torch.zeros(1), atol=1e-5)
@@ -42,7 +45,6 @@ def test_interval(interval_inputs):
     x = interval_inputs
     transform = RQSplineModule(
         n_segments=4,
-        circular=False,
         net_hidden_shape=None,
         net_activation=None,
     )
@@ -53,7 +55,6 @@ def test_inverse(interval_inputs):
     x = interval_inputs
     transform = RQSplineModule(
         n_segments=4,
-        circular=False,
         net_hidden_shape=None,
         net_activation=None,
     )
@@ -66,9 +67,8 @@ def test_inverse(interval_inputs):
 
 def test_circular(angle_inputs):
     x = angle_inputs
-    transform = RQSplineModule(
+    transform = CircularSplineModule(
         n_segments=4,
-        circular=True,
         net_hidden_shape=None,
         net_activation=None,
     )
@@ -79,7 +79,6 @@ def test_conditional(interval_inputs):
     x = interval_inputs
     transform = RQSplineModule(
         n_segments=4,
-        circular=False,
         net_hidden_shape=[],
         net_activation=None,
     )

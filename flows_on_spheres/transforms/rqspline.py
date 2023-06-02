@@ -1,5 +1,7 @@
+import math
 from math import pi as π
 from typing import Optional
+import warnings
 
 import torch
 import torch.nn.functional as F
@@ -8,12 +10,14 @@ from flows_on_spheres.geometry import (
     circle_vectors_to_angles,
     circle_angles_to_vectors,
 )
-from flows_on_spheres.nn import TransformModule
+from flows_on_spheres.nn import TransformModule, CircularTransformModule
 
 Tensor = torch.Tensor
 
+warnings.filterwarnings("ignore", message="torch.searchsorted")
 
-class _RQSplineTransform:
+
+class RQSplineTransform:
     """
     References:
         Gregory, J. A. & Delbourgo, R. C2 Rational \
@@ -21,24 +25,101 @@ class _RQSplineTransform:
         Numerical Analysis, 1983, 3, 141-152
         """
 
-    tol: float = 1e-5
+    _tol: float = 1e-4
 
     def __init__(
         self,
-        knots_x: Tensor,
-        knots_y: Tensor,
-        knots_dydx: Tensor,
+        widths: Tensor,
+        heights: Tensor,
+        derivs: Tensor,
+        *,
+        lower_bound: float,
+        upper_bound: float,
+        periodic: bool = False,
+        linear_tails: bool = False,
+        min_width: float = 1e-3,
+        min_height: float = 1e-3,
+        min_deriv: float = 1e-3,
     ):
-        _, n_knots = knots_x.shape
-        assert knots_y.shape == knots_x.shape
-        assert knots_dydx.shape == knots_x.shape
-        assert (knots_dydx > 0).all()
+        assert widths.isfinite().all()
+        assert heights.isfinite().all()
+        assert derivs.isfinite().all()
+
+        assert widths.shape == heights.shape
+        assert widths.shape[:-1] == derivs.shape[:-1]
+
+        n_bins = widths.shape[-1]
+        assert min_width * n_bins < 1
+        assert min_height * n_bins < 1
+
+        assert lower_bound < upper_bound
+
+        assert not (periodic and linear_tails)
+
+        # Normalise the widths and heights to the interval
+        widths = (
+            F.softmax(widths, dim=1) * (1 - min_width * n_bins) + min_width
+        ) * (upper_bound - lower_bound)
+        heights = (
+            F.softmax(heights, dim=1) * (1 - min_height * n_bins) + min_height
+        ) * (upper_bound - lower_bound)
+
+        # Ensure the derivatives are positive and > min_slope
+        # Specifying β = log(2) / (1 - ε) means softplus(0, β) = 1
+        derivs = (
+            F.softplus(derivs, beta=math.log(2) / (1 - min_deriv)) + min_deriv
+        )
+
+        n_derivs = derivs.shape[-1]
+        if periodic:
+            assert n_derivs == n_bins
+            derivs = F.pad(derivs.unsqueeze(1), (0, 1), "circular").squeeze(1)
+        elif linear_tails:
+            assert n_derivs == n_bins - 1
+            derivs = F.pad(derivs, (1, 1), "constant", 1.0)
+        else:
+            assert n_derivs == n_bins + 1
+
+        # Build the spline
+        zeros = widths.new_zeros((*widths.shape[:-1], 1))
+        knots_x = torch.cat(
+            (
+                zeros,
+                torch.cumsum(widths, dim=-1),
+            ),
+            dim=-1,
+        ).add(lower_bound)
+        knots_y = torch.cat(
+            (
+                zeros,
+                torch.cumsum(heights, dim=-1),
+            ),
+            dim=-1,
+        ).add(lower_bound)
 
         self.knots_x = knots_x
         self.knots_y = knots_y
-        self.knots_dydx = knots_dydx
+        self.knots_dydx = derivs
 
-        self.n_segments = n_knots - 1
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        self.n_bins = n_bins
+
+    def _check_bounds(self, inputs: Tensor) -> Tensor:
+        outside_bounds = (inputs < self.lower_bound) | (
+            inputs > self.upper_bound
+        )
+        if outside_bounds.any():
+            print("input outside bounds!", inputs[outside_bounds])
+            raise ValueError("inputs outside of the spline bounds")
+
+        # NOTE: For linear tails I need to add a function that
+        # creates a masked transformation
+
+        inputs = inputs.clamp(
+            self.lower_bound + self._tol, self.upper_bound - self._tol
+        )
+        return inputs
 
     def _get_segment(
         self, inputs: Tensor, inverse: bool
@@ -49,21 +130,7 @@ class _RQSplineTransform:
 
         knots = self.knots_y if inverse else self.knots_x
 
-        outside_bounds = (
-            inputs < knots.min(dim=1, keepdim=True).values - self.tol
-        ) | (inputs > knots.max(dim=1, keepdim=True).values + self.tol)
-        if outside_bounds.any():
-            print(inputs[outside_bounds])
-            raise ValueError("inputs outside of the spline bounds")
-
-        # NOTE: calling contiguous() just to silence the warning message
-        # don't really care about optimal perf
-        i0 = (
-            torch.searchsorted(
-                knots.expand(n_batch, -1).contiguous(), inputs.contiguous()
-            )
-            - 1
-        ).clamp_(0, self.n_segments - 1)
+        i0 = torch.searchsorted(knots.expand(n_batch, -1), inputs) - 1
         i0_i1 = torch.stack((i0, i0 + 1), dim=0)
 
         x0_x1 = self.knots_x.expand(2, n_batch, -1).gather(-1, i0_i1)
@@ -81,20 +148,23 @@ class _RQSplineTransform:
         return x0, x1, y0, y1, d0, d1, s
 
     def __call__(self, x: Tensor) -> tuple[Tensor, Tensor]:
+        x = self._check_bounds(x)
         x0, x1, y0, y1, d0, d1, s = self._get_segment(x, inverse=False)
 
         θx = (x - x0) / (x1 - x0)
+        assert (θx >= 0).all()
+        assert (θx <= 1).all()
 
-        denominator = s + (d1 + d0 - 2 * s) * θx * (1 - θx)
+        denom = s + (d1 + d0 - 2 * s) * θx * (1 - θx)
 
-        θy = (s * θx**2 + d0 * θx * (1 - θx)) / denominator
+        θy = (s * θx**2 + d0 * θx * (1 - θx)) / denom
 
         y = y0 + (y1 - y0) * θy
 
         dydx = (
             s**2
             * (d1 * θx**2 + 2 * s * θx * (1 - θx) + d0 * (1 - θx) ** 2)
-            / denominator**2
+            / denom**2
         )
         assert torch.all(dydx > 0)
 
@@ -103,6 +173,7 @@ class _RQSplineTransform:
         return y, ldj
 
     def inverse(self, y: Tensor) -> tuple[Tensor, Tensor]:
+        y = self._check_bounds(y)
         x0, x1, y0, y1, d0, d1, s = self._get_segment(y, inverse=True)
 
         θy = (y - y0) / (y1 - y0)
@@ -115,30 +186,16 @@ class _RQSplineTransform:
 
         x = x0 + (x1 - x0) * θx
 
-        denominator = s + (d1 + d0 - 2 * s) * θx * (1 - θx)
+        denom = s + (d1 + d0 - 2 * s) * θx * (1 - θx)
 
         dydx = (
             s**2
             * (d1 * θx**2 + 2 * s * θx * (1 - θx) + d0 * (1 - θx) ** 2)
-            / denominator**2
+            / denom**2
         )
 
         ldj = dydx.log().negative().squeeze(1)
 
-        return x, ldj
-
-
-class _RQSplineTransformCircular(_RQSplineTransform):
-    def __call__(self, x: Tensor) -> tuple[Tensor, Tensor]:
-        ϕ = circle_vectors_to_angles(x)
-        ϕ, ldj = super().__call__(ϕ)
-        y = circle_angles_to_vectors(ϕ)
-        return y, ldj
-
-    def inverse(self, y: Tensor) -> tuple[Tensor, Tensor]:
-        ϕ = circle_vectors_to_angles(y)
-        ϕ, ldj = super().__call__(ϕ)
-        x = circle_angles_to_vectors(ϕ)
         return x, ldj
 
 
@@ -147,71 +204,75 @@ class RQSplineModule(TransformModule):
         self,
         *,
         n_segments: int,
-        circular: bool,
         net_hidden_shape: Optional[list[int]] = None,
         net_activation: Optional[str] = None,
-        min_slope: float = 1e-3,
+        min_width: float = 1e-3,
+        min_height: float = 1e-3,
+        min_deriv: float = 1e-3,
     ):
-        n_derivs = n_segments if circular else n_segments + 1
         super().__init__(
-            n_params=(2 * n_segments + n_derivs),
+            n_params=3 * n_segments + 1,
             net_hidden_shape=net_hidden_shape,
             net_activation=net_activation,
         )
         self.n_segments = n_segments
-        self.n_derivs = n_derivs
-        self.circular = circular
-        self.min_slope = min_slope
-        self.lower_bound = 0 if circular else -1
-        self.upper_bound = 2 * π if circular else +1
+        self.min_width = min_width
+        self.min_height = min_height
+        self.min_deriv = min_deriv
 
-    def forward(
-        self, k: Tensor | None = None
-    ) -> _RQSplineTransform | _RQSplineTransformCircular:
+    def forward(self, k: Tensor | None = None) -> RQSplineTransform:
         params = self.params(k)
-
         widths, heights, derivs = params.split(
-            [self.n_segments, self.n_segments, self.n_derivs],
+            [self.n_segments, self.n_segments, self.n_segments + 1],
             dim=1,
         )
-
-        # Normalise the widths and heights to the interval
-        widths = F.softmax(widths, dim=1) * (
-            self.upper_bound - self.lower_bound
+        return RQSplineTransform(
+            widths,
+            heights,
+            derivs,
+            lower_bound=-1.0,
+            upper_bound=+1.0,
+            min_width=self.min_width,
+            min_height=self.min_height,
+            min_deriv=self.min_deriv,
         )
-        heights = F.softmax(heights, dim=1) * (
-            self.upper_bound - self.lower_bound
+
+
+class CircularSplineModule(CircularTransformModule):
+    def __init__(
+        self,
+        *,
+        n_segments: int,
+        net_hidden_shape: Optional[list[int]] = None,
+        net_activation: Optional[str] = None,
+        min_width: float = 1e-3,
+        min_height: float = 1e-3,
+        min_deriv: float = 1e-3,
+    ):
+        super().__init__(
+            n_params=3 * n_segments,
+            net_hidden_shape=net_hidden_shape,
+            net_activation=net_activation,
         )
+        self.n_segments = n_segments
+        self.min_width = min_width
+        self.min_height = min_height
+        self.min_deriv = min_deriv
 
-        # Ensure the derivatives are positive and > min_slope
-        derivs = F.softplus(derivs) + self.min_slope
-
-        if self.circular:
-            # match derivs at 0 and 2pi
-            derivs = F.pad(derivs.unsqueeze(1), (0, 1), "circular").squeeze(1)
-
-        zeros = widths.new_zeros((*widths.shape[:-1], 1))
-
-        # Build the spline
-        knots_x = torch.cat(
-            (
-                zeros,
-                torch.cumsum(widths, dim=-1),
-            ),
-            dim=-1,
-        ).add(self.lower_bound)
-        knots_y = torch.cat(
-            (
-                zeros,
-                torch.cumsum(heights, dim=-1),
-            ),
-            dim=-1,
-        ).add(self.lower_bound)
-        knots_dydx = derivs
-        if not (knots_dydx > 0).all():
-            print(knots_dydx[~(knots_dydx > 0)])
-
-        if self.circular:
-            return _RQSplineTransformCircular(knots_x, knots_y, knots_dydx)
-        else:
-            return _RQSplineTransform(knots_x, knots_y, knots_dydx)
+    def forward(self, k: Tensor | None = None) -> RQSplineTransform:
+        params = self.params(k)
+        widths, heights, derivs = params.split(
+            [self.n_segments, self.n_segments, self.n_segments],
+            dim=1,
+        )
+        return RQSplineTransform(
+            widths,
+            heights,
+            derivs,
+            lower_bound=0,
+            upper_bound=2 * π,
+            periodic=True,
+            min_width=self.min_width,
+            min_height=self.min_height,
+            min_deriv=self.min_deriv,
+        )

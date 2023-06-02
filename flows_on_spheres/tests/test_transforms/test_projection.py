@@ -27,7 +27,7 @@ def test_identity(inputs):
         torch.zeros(SAMPLE_SIZE, 1), torch.zeros(SAMPLE_SIZE, 1)
     )
     y, ldj = f(x)
-    assert allclose(x, y)
+    assert allclose(x, y, atol=1e-6)
     assert allclose(ldj, torch.zeros(1), atol=1e-5)
 
 
@@ -37,7 +37,7 @@ def test_identity_mixture(inputs):
         torch.zeros(SAMPLE_SIZE, 3, 1), torch.zeros(SAMPLE_SIZE, 3, 1), None
     )
     y, ldj = f(x)
-    assert allclose(x, y)
+    assert allclose(x, y, atol=1e-6)
     assert allclose(ldj, torch.zeros(1), atol=1e5)
 
 

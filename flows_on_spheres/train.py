@@ -8,6 +8,8 @@ from flows_on_spheres.metrics import LogWeightMetrics
 
 Tensor = torch.Tensor
 
+#torch.autograd.set_detect_anomaly(True)
+
 
 def train(
     flow: Flow,
@@ -16,6 +18,7 @@ def train(
     batch_size: int,
     init_lr: float = 1e-2,
     device: str = "cpu",
+    dtype: torch.dtype = torch.float32,
     validation_interval: int = 100,
 ) -> Flow:
     """
@@ -40,8 +43,8 @@ def train(
 
     """
 
-    flow = flow.to(device)
-    prior = uniform_prior(target.dim, device=device, dtype=torch.float32)
+    flow = flow.to(device=device, dtype=dtype)
+    prior = uniform_prior(target.dim, device=device, dtype=dtype)
     optimizer = torch.optim.Adam(flow.parameters(), lr=init_lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=steps
@@ -65,6 +68,8 @@ def train(
                 log_weights = log_target_density - log_model_density
                 metrics = LogWeightMetrics(log_weights)
 
+                idx = log_weights.argmax()
+
                 output = "  |  ".join(
                     [
                         f"  {step:5d}",
@@ -72,6 +77,10 @@ def train(
                         f"{metrics.variance:2.3f}",
                         f"{metrics.metropolis_acceptance:1.3f}",
                         f"{metrics.effective_sample_size:1.3f}",
+                        f"{log_weights[idx].item():1.3f}",
+                        f"{log_det_jacobian[idx].item():1.3f}",
+                        f"{x[idx]}",
+                        f"{fx[idx]}",
                     ]
                 )
                 pbar.write(output)

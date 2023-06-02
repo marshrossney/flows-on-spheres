@@ -6,18 +6,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from flows_on_spheres.abc import Flow
-from flows_on_spheres.geometry import rotate_2d
-from flows_on_spheres.nn import TransformModule
+from flows_on_spheres.geometry import as_angle, as_vector, mod_2pi
+from flows_on_spheres.nn import TransformModule, CircularTransformModule
+from flows_on_spheres.linalg import norm_keepdim
 
 Tensor: TypeAlias = torch.Tensor
-
-Transformer = None
+BoolTensor: TypeAlias = torch.BoolTensor
 
 
 class CircularFlow(Flow):
     dim = 1
 
-    def __init__(self, transform: TransformModule):
+    def __init__(self, transform: CircularTransformModule):
         super().__init__()
         self.transform = transform
         self.rotation = nn.Parameter(torch.empty(1).uniform_(0, 2 * π))
@@ -25,8 +25,9 @@ class CircularFlow(Flow):
     def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
         f, θ = self.transform, self.rotation
 
-        y, ldj = f(None)(x)
-        y = rotate_2d(y, θ)
+        ϕ, ldj = f(None)(as_angle(x))
+
+        y = as_vector(mod_2pi(ϕ + θ))
 
         return y, ldj
 
@@ -37,10 +38,9 @@ class RecursiveFlowS2(Flow):
     def __init__(
         self,
         interval_transform: TransformModule,
-        circular_transform: TransformModule,
+        circular_transform: CircularTransformModule,
         ordering: list[int],
-        *,
-        softplus_beta: float = 1e8,
+        epsilon: float = 1e-3,
     ):
         super().__init__()
         self.interval_transform = interval_transform
@@ -56,26 +56,31 @@ class RecursiveFlowS2(Flow):
         self.inverse_ordering = sorted(
             range(self.dim + 1), key=self.ordering.__getitem__
         )
+        self.epsilon = epsilon
 
-        self.softplus_beta = softplus_beta
+    def _safe_mask(self, x: Tensor) -> BoolTensor:
+        return (1 - x**2) > self.epsilon**2
 
     def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
         x = x[:, self.ordering]
         x3, x1_x2 = x.tensor_split([1], dim=1)
-
-        # Map sphere to cylinder
-        ρ3 = F.softplus(1 - x3**2, beta=self.softplus_beta).sqrt()
-        x1_x2 = x1_x2 / ρ3
+        ϕ12 = as_angle(x1_x2)
 
         y3, ldj_3 = self.interval_transform(None)(x3)
+        ψ12, ldj_12 = self.circular_transform(y3)(ϕ12)
+        z1_z2 = as_vector(ψ12)# + self.rotation)  # unit circle
 
-        y1_y2, ldj_12 = self.circular_transform(y3)(x1_x2)
+        # False elements are very close to poles +/- 1
+        safe_mask = self._safe_mask(y3)
 
-        y1_y2 = rotate_2d(y1_y2, self.rotation)
-
-        # Back to sphere
-        r3 = F.softplus(1 - y3**2, beta=self.softplus_beta).sqrt()
-        y1_y2 = r3 * y1_y2
+        # Double where to avoid NaNs in gradients
+        r3_masked = torch.where(safe_mask, 1 - y3**2, self.epsilon**2).sqrt()
+        assert r3_masked.isfinite().all()
+        y1_y2 = torch.where(
+            safe_mask,
+            z1_z2 * r3_masked,
+            z1_z2 * self.epsilon,
+        )
 
         y = torch.cat([y3, y1_y2], dim=1)
         y = y[:, self.inverse_ordering]

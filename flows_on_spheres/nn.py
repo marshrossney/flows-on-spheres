@@ -32,7 +32,7 @@ def make_fnn(
     return torch.nn.Sequential(*list(chain(*zip(layers, activations))))
 
 
-class TransformModule(nn.Module, metaclass=ABCMeta):
+class _TransformModule(nn.Module, metaclass=ABCMeta):
     def __init__(
         self,
         n_params: int,
@@ -76,3 +76,11 @@ class TransformModule(nn.Module, metaclass=ABCMeta):
         self, k: Tensor | None = None
     ) -> Callable[Tensor, tuple[Tensor, Tensor]]:
         ...
+
+
+class TransformModule(_TransformModule):
+    pass
+
+
+class CircularTransformModule(_TransformModule):
+    pass
