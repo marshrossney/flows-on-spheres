@@ -67,15 +67,27 @@ class _TransformModule(nn.Module, metaclass=ABCMeta):
     def params(self, k: Tensor | None) -> Tensor:
         return self._get_params(k)
 
-    @property
-    def domain(self) -> str:
-        ...
-
     @abstractmethod
     def forward(
         self, k: Tensor | None = None
     ) -> Callable[Tensor, tuple[Tensor, Tensor]]:
         ...
+
+    def _forward(
+        self, k: Tensor | None = None
+    ) -> Callable[Tensor, tuple[Tensor, Tensor]]:
+        params = self.params(k)
+
+        transform = self.get_transform(params)
+
+        if k is None:
+            return partial(
+                torch.vmap(transform, (0, None), (0, 0)), params=params
+            )
+        else:
+            return partial(
+                torch.vmap(transform, (0, 0), (0, 0)), params=params
+            )
 
 
 class TransformModule(_TransformModule):

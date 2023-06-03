@@ -8,8 +8,10 @@ from flows_on_spheres.nn import TransformModule
 Tensor: TypeAlias = torch.Tensor
 Transform: TypeAlias = Callable[[Tensor, Tensor], tuple[Tensor, Tensor]]
 
+
 def affine_transform(x: Tensor, s: Tensor, t: Tensor):
     return (x - t) * s, s
+
 
 def make_mixture(transform: Transform, n_mixture: int):
     transform_vmap = torch.vmap(transform, in_dims=(None, 0), out_dims=(0, 0))
@@ -20,9 +22,9 @@ def make_mixture(transform: Transform, n_mixture: int):
 
     return _mixture_transform
 
+
 def make_weighted_mixture(transform: Transform, *, min_weight: float = 1e-2):
     transform_vmap = torch.vmap(transform, in_dims=(None, 0), out_dims=(0, 0))
-
 
     def _mixture_transform(x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
         params, weights = params.tensor_split([-1], dim=1)
@@ -38,7 +40,6 @@ def make_weighted_mixture(transform: Transform, *, min_weight: float = 1e-2):
 
 
 def mixture_transform(transform: Transform, n_mixture: int) -> Transform:
-
     _transform = torch.vmap(transform, in_dims=(None, 0, 0), out_dims=(0, 0))
 
     def _mixture_transform(x: Tensor, *args, **kwargs):
@@ -47,8 +48,8 @@ def mixture_transform(transform: Transform, n_mixture: int) -> Transform:
 
     return _mixture_transform
 
-def weighted_mixture(transform: Transform, weights: Tensor) -> Transform:
 
+def weighted_mixture(transform: Transform, weights: Tensor) -> Transform:
     weights = torch.softmax(weights, dim=0)
 
     _transform = torch.vmap(transform, in_dims=(None, 0, 0), out_dims=(0, 0))
@@ -59,6 +60,7 @@ def weighted_mixture(transform: Transform, weights: Tensor) -> Transform:
         return (y * weights).mean(dim=0), (dydx * weights).mean(dim=0)
 
     return _mixture_transform
+
 
 if __name__ == "__main__":
     x = torch.randn(1)
@@ -83,4 +85,3 @@ if __name__ == "__main__":
     y, dydx = h(x, s, t)
 
     print(y.shape, dydx.shape)
-

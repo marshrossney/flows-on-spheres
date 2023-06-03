@@ -20,5 +20,9 @@ def s1_vectors(s1_angles):
 
 def test_angle_vector_conversion_s1(s1_angles, s1_vectors):
     # atol 1e-7 fails!
-    assert torch.allclose(as_vector(as_angle(s1_vectors)), s1_vectors, atol=1e-6, rtol=0)
-    assert torch.allclose(as_angle(as_vector(s1_angles)), s1_angles, atol=1e-6, rtol=0)
+    assert torch.allclose(
+        as_vector(as_angle(s1_vectors)), s1_vectors, atol=1e-6, rtol=0
+    )
+    assert torch.allclose(
+        as_angle(as_vector(s1_angles)), s1_angles, atol=1e-6, rtol=0
+    )

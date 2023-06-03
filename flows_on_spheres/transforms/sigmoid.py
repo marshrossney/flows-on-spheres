@@ -18,16 +18,13 @@ def exponential_ramp(
 ) -> Tensor:
     assert isinstance(power, int) and power > 0
     α, β = log_scale.exp(), power
-    # TODO:
-    # Why use where and not clamp?
-    # Why does all this avoid NaN?
-    # Why divide by exp(-α) rather than use single exponential?
-    z = torch.where(x > eps, x, torch.full_like(x, eps))
-    return torch.where(
+    x_masked = torch.where(x > eps, x, torch.full_like(x, eps))
+    y = torch.where(
         x > eps,
-        torch.exp(-α * z.pow(-β)) / torch.exp(-α),
+        torch.exp(-α * x_masked.pow(-β)) / torch.exp(-α),
         torch.zeros_like(x),
     )
+    return
 
 
 def monomial_ramp(x: Tensor, order: int) -> Tensor:
@@ -39,9 +36,14 @@ def generalised_sigmoid(
     ramp: Callable[[Tensor, Any, ...], Tensor]
 ) -> Callable[[Tensor, Any, ...], Tensor]:
     def _sigmoid(x: Tensor, **ramp_kwargs):
-        numer = ramp(x, **ramp_kwargs)
-        denom = numer + ramp(1 - x, **ramp_kwargs)
-        return numer / denom
+        ρ_x, dρdx_x = ramp(x, **ramp_kwargs)
+        ρ_1mx, dρdx_1mx = ramp(1 - x, **ramp_kwargs)
+
+        σ = ρ_x / (ρ_x + ρ_1mx)
+
+        dσdx = (ρ_1mx * dρdx_x + ρ_x * dρdx_1mx) / (ρ_x + ρ_1mx) ** 2
+
+        return σ, dσdx
 
     return _sigmoid
 

@@ -8,7 +8,7 @@ from flows_on_spheres.metrics import LogWeightMetrics
 
 Tensor = torch.Tensor
 
-#torch.autograd.set_detect_anomaly(True)
+# torch.autograd.set_detect_anomaly(True)
 
 
 def train(
@@ -42,7 +42,6 @@ def train(
         how often to compute validation metrics
 
     """
-
     flow = flow.to(device=device, dtype=dtype)
     prior = uniform_prior(target.dim, device=device, dtype=dtype)
     optimizer = torch.optim.Adam(flow.parameters(), lr=init_lr)
@@ -53,7 +52,12 @@ def train(
     flow.target = target
 
     with trange(steps, desc="Training") as pbar:
-        pbar.write("   Step  |  KL     |  Var    |  Acc    |  ESS")
+        pbar.write(
+            "   Step  |  Acc    |  ESS    |      log(p_target) - log(p_model)       "
+        )
+        pbar.write(
+            "         |         |         |   min     |  max    |   mean   |  var   "
+        )
         for step in pbar:
             x, log_prior_density = prior(batch_size)
 
@@ -68,19 +72,15 @@ def train(
                 log_weights = log_target_density - log_model_density
                 metrics = LogWeightMetrics(log_weights)
 
-                idx = log_weights.argmax()
-
                 output = "  |  ".join(
                     [
                         f"  {step:5d}",
-                        f"{metrics.kl_divergence:2.3f}",
-                        f"{metrics.variance:2.3f}",
-                        f"{metrics.metropolis_acceptance:1.3f}",
-                        f"{metrics.effective_sample_size:1.3f}",
-                        f"{log_weights[idx].item():1.3f}",
-                        f"{log_det_jacobian[idx].item():1.3f}",
-                        f"{x[idx]}",
-                        f"{fx[idx]}",
+                        f"{metrics.metropolis_acceptance:.3f}",
+                        f"{metrics.effective_sample_size:.3f}",
+                        f"{metrics.min:07.3f}",
+                        f"{metrics.max:.3f}",
+                        f"{metrics.mean:.3f}",
+                        f"{metrics.variance:.3f}",
                     ]
                 )
                 pbar.write(output)

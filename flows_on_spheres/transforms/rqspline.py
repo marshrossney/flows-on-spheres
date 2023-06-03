@@ -211,7 +211,8 @@ class RQSplineModule(TransformModule):
         min_deriv: float = 1e-3,
     ):
         super().__init__(
-            n_params=3 * n_segments + 1,
+            # n_params=3 * n_segments + 1,
+            n_params=3 * n_segments - 1,
             net_hidden_shape=net_hidden_shape,
             net_activation=net_activation,
         )
@@ -223,7 +224,8 @@ class RQSplineModule(TransformModule):
     def forward(self, k: Tensor | None = None) -> RQSplineTransform:
         params = self.params(k)
         widths, heights, derivs = params.split(
-            [self.n_segments, self.n_segments, self.n_segments + 1],
+            # [self.n_segments, self.n_segments, self.n_segments + 1],
+            [self.n_segments, self.n_segments, self.n_segments - 1],
             dim=1,
         )
         return RQSplineTransform(
@@ -232,6 +234,7 @@ class RQSplineModule(TransformModule):
             derivs,
             lower_bound=-1.0,
             upper_bound=+1.0,
+            linear_tails=True,
             min_width=self.min_width,
             min_height=self.min_height,
             min_deriv=self.min_deriv,

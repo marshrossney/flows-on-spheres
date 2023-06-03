@@ -12,14 +12,15 @@ from flows_on_spheres.utils import mod_2pi
 
 Tensor = torch.Tensor
 
+
 def mobius(x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
     c = params
 
-    x_x0 = torch.stack(
-            [as_vector(x), as_vector(torch.zeros_like(x))]
-    )
+    x_x0 = torch.stack([as_vector(x), as_vector(torch.zeros_like(x))])
 
-    dydx = ((1 - torch.dot(c, c)) / torch.dot(x_x0 - c, x_x0 - c)).unsqueeze(-1)
+    dydx = ((1 - torch.dot(c, c)) / torch.dot(x_x0 - c, x_x0 - c)).unsqueeze(
+        -1
+    )
     y_y0 = dydx * (x_x0 - c) - c
 
     y, y0 = as_angle(y_y0)
@@ -29,7 +30,8 @@ def mobius(x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
 
     return y, dydx
 
-#_mobius_vmap = torch.vmap(mobius, in_dims=(None, 0), out_dims=(0, 0))
+
+# _mobius_vmap = torch.vmap(mobius, in_dims=(None, 0), out_dims=(0, 0))
 
 """
 def mobius_mixture(x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
@@ -42,6 +44,7 @@ def mobius_weighted_mixture(x: Tensor, params: Tensor:) -> tuple[Tensor, Tensor]
     y, dydx = _mobius_vmap(x, c)
     return (w * y).mean(dim=0), (w * dydx).mean(dim=0)
 """
+
 
 class MobiusModule(CircularTransformModule):
     def __init__(
@@ -73,15 +76,10 @@ class MobiusModule(CircularTransformModule):
     def _constrain_to_disk(self, c: Tensor) -> Tensor:
         c = torch.tanh(c) * (1 - self.epsilon)
         c1, c2 = c.split(1, dim=-1)
-        c = torch.cat(
-            [c1, c2 * (1 - c1.pow(2)).sqrt()], dim=-1
-        )
+        c = torch.cat([c1, c2 * (1 - c1.pow(2)).sqrt()], dim=-1)
         return c
 
-    def forward(
-        self, k: Tensor | None = None
-    ):
-
+    def forward(self, k: Tensor | None = None):
         params = self.params(k)
 
         if self.mixture > 1:
@@ -93,7 +91,6 @@ class MobiusModule(CircularTransformModule):
             params = torch.cat([params, weights], dim=-1)
         else:
             params = self._constrain_to_disk(params)
-
 
         if k is None:
             func = torch.vmap(self.mobius_func, (0, 0), (0, 0))
@@ -123,6 +120,7 @@ class MobiusModule(CircularTransformModule):
             return _MobiusMixtureTransform(c, weights)
 
 """
+
 
 class _MobiusTransform:
     def __init__(self, points: Tensor):
@@ -233,4 +231,3 @@ class _MobiusMixtureTransform:
         raise NotImplementedError
 
 """
-
