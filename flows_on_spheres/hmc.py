@@ -1,5 +1,5 @@
+from abc import ABC, abstractmethod
 import logging
-from math import isclose
 from typing import TypeAlias, Optional, Callable
 
 from tqdm import trange
@@ -7,7 +7,7 @@ from tqdm import trange
 import torch
 import torch.nn as nn
 
-from flows_on_spheres.abc import Density, Flow, Hamiltonian
+from flows_on_spheres.flows import Flow
 from flows_on_spheres.prior import uniform_prior
 from flows_on_spheres.linalg import (
     orthogonal_projection,
@@ -15,11 +15,35 @@ from flows_on_spheres.linalg import (
     dot_keepdim,
     norm_keepdim,
 )
+from flows_on_spheres.target import Density
 
 Tensor: TypeAlias = torch.Tensor
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
+
+
+class Hamiltonian(ABC):
+    @property
+    @abstractmethod
+    def dim(self) -> int:
+        ...
+
+    @abstractmethod
+    def hamiltonian(self, x: Tensor, p: Tensor) -> Tensor:
+        ...
+
+    @abstractmethod
+    def grad_wrt_p(self, p: Tensor) -> Tensor:
+        ...
+
+    @abstractmethod
+    def grad_wrt_x(self, x: Tensor) -> Tensor:
+        ...
+
+    @abstractmethod
+    def sample_momentum(self, x: Tensor) -> Tensor:
+        ...
 
 
 class HamiltonianGaussianMomenta(Hamiltonian):
@@ -94,15 +118,11 @@ def leapfrog_integrator(
     traj_length: float,
     on_step_func: Optional[Callable[[Tensor, Tensor, float], None]] = None,
 ) -> tuple[Tensor, Tensor, float]:
-    n_steps = max(1, round(traj_length / abs(step_size)))
-    if not isclose(n_steps * abs(step_size), traj_length):
-        msg = f"Warning: trajectory length will be {n_steps * step_size} which is different from the requested length {traj_length}"
-        log.warn(msg)
-
     assert p0.dtype == x0.dtype
     if not x0.dtype == torch.float64:
         log.warn("Not using 64 bit precision. This may be a problem")
 
+    n_steps = max(1, round(traj_length / abs(step_size)))
     x = x0.clone()
     p = p0.clone()
     t = 0
@@ -183,7 +203,6 @@ class HMCSampler:
     def exp_delta_H(self) -> Tensor:
         return torch.stack(self._delta_H_history, dim=0).negative().exp()
 
-
     @torch.no_grad()
     def sample(self, n_traj: int, n_therm: int) -> Tensor:
         x0 = self._current_state
@@ -193,7 +212,6 @@ class HMCSampler:
 
         sampling = False
         with trange(n_therm + n_traj, desc="Thermalising") as pbar:
-
             for step in pbar:
                 if step == n_therm:
                     sampling = True
@@ -262,15 +280,17 @@ class FlowedDensity(nn.Module, Density):
         x.requires_grad_(True)
         fx, ldj = self.flow(x)
 
-        # This is a scalar field on the latent manifold - function of x
+        # This is a function on the latent manifold, i.e. a function of x
         log_density_flowed = self.target.log_density(fx) + ldj
 
+        # Ordinary derivative with respect to x (in the ambient space)
         (gradient,) = torch.autograd.grad(
             outputs=log_density_flowed,
             inputs=x,
             grad_outputs=torch.ones_like(log_density_flowed),
         )
 
+        # Derivative on the latent manifold
         return orthogonal_projection(gradient, x)
 
 

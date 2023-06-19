@@ -11,7 +11,7 @@ from flows_on_spheres.visualise import (
     CircularFlowVisualiser,
     SphericalFlowVisualiser,
 )
-from flows_on_spheres.scripts import CHECKPOINT_FNAME
+from flows_on_spheres.scripts.io import load
 
 log = logging.getLogger(__name__)
 
@@ -22,12 +22,12 @@ def visualise(
 ) -> dict[str, Figure]:
     model_path = Path(model)
 
-    flow = torch.load(model_path / CHECKPOINT_FNAME)
+    flow, target = load(model_path)
 
     if flow.dim == 1:
-        visualiser = CircularFlowVisualiser(flow, flow.target, sample_size)
+        visualiser = CircularFlowVisualiser(flow, target, sample_size)
     elif flow.dim == 2:
-        visualiser = SphericalFlowVisualiser(flow, flow.target, sample_size)
+        visualiser = SphericalFlowVisualiser(flow, target, sample_size)
     else:
         raise NotImplementedError("Visualisations not implemented for dim > 2")
 

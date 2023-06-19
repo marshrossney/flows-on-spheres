@@ -11,6 +11,7 @@ Tensor: TypeAlias = torch.Tensor
 
 class LogWeightMetrics:
     def __init__(self, log_weights: Tensor):
+        log_weights = log_weights.detach().squeeze()
         assert log_weights.dim() == 1
         self.log_weights = log_weights
 
@@ -48,19 +49,29 @@ class LogWeightMetrics:
         return float(ess)
 
     @property
-    def kl_divergence(self) -> float:
-        return self.log_weights.mean().negative().item()
+    def mean(self) -> float:
+        return self.log_weights.mean().item()
 
     @property
     def variance(self) -> float:
         return self.log_weights.var().item()
 
+    @property
+    def min(self) -> float:
+        return self.log_weights.min().item()
+
+    @property
+    def max(self) -> float:
+        return self.log_weights.max().item()
+
     def as_dict(self) -> dict[str, float]:
         return {
-            "acceptance": self.metropolis_acceptance,
+            "metropolis_acceptance": self.metropolis_acceptance,
             "effective_sample_size": self.effective_sample_size,
-            "kl_divergence": self.kl_divergence,
+            "mean": self.mean,
             "variance": self.variance,
+            "min": self.min,
+            "max": self.max,
         }
 
 

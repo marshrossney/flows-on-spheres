@@ -10,16 +10,20 @@ from flows_on_spheres.linalg import dot, cross, mv
 Tensor: TypeAlias = torch.Tensor
 
 
-def angle(x: Tensor) -> Tensor:
+def as_angle(x: Tensor) -> Tensor:
     return mod_2pi(torch.atan2(*list(reversed(x.split(1, dim=-1)))))
 
 
+def as_vector(ϕ: Tensor) -> Tensor:
+    return torch.cat([ϕ.cos(), ϕ.sin()], dim=-1)
+
+
 def circle_vectors_to_angles(x: Tensor) -> Tensor:
-    return angle(x)
+    return as_angle(x)
 
 
 def circle_angles_to_vectors(ϕ: Tensor) -> Tensor:
-    return torch.cat([ϕ.cos(), ϕ.sin()], dim=-1)
+    return as_vector(ϕ)
 
 
 def sphere_vectors_to_angles(xyz: Tensor) -> Tensor:
@@ -61,7 +65,6 @@ def get_rotation_matrix(x: Tensor, y: Tensor) -> Tensor:
         ],
         dim=-1,
     ).view(*x.shape, 3)
-
 
     rej = y - xdoty * x
 

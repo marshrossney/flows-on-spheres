@@ -7,14 +7,15 @@ from jsonargparse.typing import PositiveFloat, Path_dw
 from matplotlib.pyplot import Figure
 import torch
 
-from flows_on_spheres.abc import Density, Flow
+from flows_on_spheres.flows import Flow
 from flows_on_spheres.hmc import (
     HamiltonianGaussianMomenta,
     HamiltonianCauchyMomenta,
     FlowedDensity,
 )
 from flows_on_spheres.visualise import TrajectoryVisualiser
-from flows_on_spheres.scripts import CHECKPOINT_FNAME
+from flows_on_spheres.scripts.io import load
+from flows_on_spheres.target import Density
 
 
 def visualise_trajectory(
@@ -57,11 +58,11 @@ parser.add_argument("--dummy", action=ActionYesNo)
 def main(config: Namespace) -> None:
     model_path = Path(config.model)
 
-    flow = torch.load(model_path / CHECKPOINT_FNAME)
+    flow, target = load(model_path)
 
     dict_of_figs = visualise_trajectory(
         flow=None if config.dummy else flow,
-        target=flow.target,
+        target=target,
         step_size=config.step_size,
         traj_length=config.traj_length,
         cauchy_gamma=config.gamma,
@@ -72,6 +73,8 @@ def main(config: Namespace) -> None:
     ) + datetime.now().strftime("%Y%m%d%H%M%S")
     figures_dir = model_path / "figures" / figures_dir
     figures_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Saving figures to {figures_dir}")
 
     for name, fig in dict_of_figs.items():
         fig.savefig(figures_dir / f"{name}.png", dpi=200, bbox_inches="tight")

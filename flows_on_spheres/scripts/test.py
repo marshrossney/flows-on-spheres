@@ -5,9 +5,9 @@ from jsonargparse.typing import PositiveInt, Path_dw
 import pandas as pd
 import torch
 
-from flows_on_spheres.scripts import (
-    CHECKPOINT_FNAME,
+from flows_on_spheres.scripts.io import (
     METRICS_FNAME,
+    load,
 )
 from flows_on_spheres.train import test
 
@@ -27,11 +27,11 @@ parser.add_argument("-r", "--repeats", type=PositiveInt, default=1)
 def main(config: Namespace) -> None:
     model_path = Path(config.model)
 
-    flow = torch.load(model_path / CHECKPOINT_FNAME)
+    flow, target = load(model_path)
 
     metrics = test(
         flow,
-        target=flow.target,
+        target=target,
         sample_size=config.sample_size,
         repeats=config.repeats,
     )

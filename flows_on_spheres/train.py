@@ -1,12 +1,16 @@
+import pandas as pd
 import torch
 from tqdm import trange
-import pandas as pd
+from typing import TypeAlias
 
-from flows_on_spheres.abc import Flow, Density
+from flows_on_spheres.flows import Flow
 from flows_on_spheres.prior import uniform_prior
 from flows_on_spheres.metrics import LogWeightMetrics
+from flows_on_spheres.target import Density
 
-Tensor = torch.Tensor
+Tensor: TypeAlias = torch.Tensor
+
+# torch.autograd.set_detect_anomaly(True)
 
 
 def train(
@@ -16,6 +20,7 @@ def train(
     batch_size: int,
     init_lr: float = 1e-2,
     device: str = "cpu",
+    dtype: torch.dtype = torch.float32,
     validation_interval: int = 100,
 ) -> Flow:
     """
@@ -39,9 +44,8 @@ def train(
         how often to compute validation metrics
 
     """
-
-    flow = flow.to(device)
-    prior = uniform_prior(target.dim, device=device, dtype=torch.float32)
+    flow = flow.to(device=device, dtype=dtype)
+    prior = uniform_prior(target.dim, device=device, dtype=dtype)
     optimizer = torch.optim.Adam(flow.parameters(), lr=init_lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=steps
@@ -49,8 +53,13 @@ def train(
 
     flow.target = target
 
-    with trange(steps, desc="Training") as pbar:
-        pbar.write("   Step  |  KL     |  Var    |  Acc    |  ESS")
+    with trange(steps + 1, desc="Training") as pbar:
+        pbar.write(
+            "   Step  |  Acc    |  ESS    |      log(p_target) - log(p_model)       "
+        )
+        pbar.write(
+            "         |         |         |   min     |  max    |   mean   |  var   "
+        )
         for step in pbar:
             x, log_prior_density = prior(batch_size)
 
@@ -68,10 +77,12 @@ def train(
                 output = "  |  ".join(
                     [
                         f"  {step:5d}",
-                        f"{metrics.kl_divergence:2.3f}",
-                        f"{metrics.variance:2.3f}",
-                        f"{metrics.metropolis_acceptance:1.3f}",
-                        f"{metrics.effective_sample_size:1.3f}",
+                        f"{metrics.metropolis_acceptance:.3f}",
+                        f"{metrics.effective_sample_size:.3f}",
+                        f"{metrics.min:07.3f}",
+                        f"{metrics.max:.3f}",
+                        f"{metrics.mean:.3f}",
+                        f"{metrics.variance:.3f}",
                     ]
                 )
                 pbar.write(output)
