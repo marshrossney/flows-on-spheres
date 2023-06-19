@@ -1,87 +1,86 @@
-from typing import Any, Callable, TypeAlias
+from functools import partial, lru_cache
+from typing import TypeAlias
 
 import torch
 import torch.nn.functional as F
 
-from flows_on_spheres.nn import TransformModule
+from flows_on_spheres.transforms.typing import TransformFunc
 
 Tensor: TypeAlias = torch.Tensor
-Transform: TypeAlias = Callable[[Tensor, Tensor], tuple[Tensor, Tensor]]
 
 
-def affine_transform(x: Tensor, s: Tensor, t: Tensor):
-    return (x - t) * s, s
+class DidNotConvergeError(Exception):
+    pass
 
 
-def make_mixture(transform: Transform, n_mixture: int):
-    transform_vmap = torch.vmap(transform, in_dims=(None, 0), out_dims=(0, 0))
-
-    def _mixture_transform(x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
-        y, dydx = transform_vmap(x, params)
-        return y.mean(dim=0), dydx.mean(dim=0)
-
-    return _mixture_transform
+def normalise_weights(weights: Tensor, dim: int, min: float = 1e-2) -> Tensor:
+    d, ε = dim, min
+    n_mix = weights.shape[d]
+    assert n_mix * ε < 1
+    return F.softmax(weights, dim=d) * (1 - n_mix * ε) + ε
 
 
-def make_weighted_mixture(transform: Transform, *, min_weight: float = 1e-2):
-    transform_vmap = torch.vmap(transform, in_dims=(None, 0), out_dims=(0, 0))
+@lru_cache
+def make_mixture(
+    transform: TransformFunc,
+    weighted: bool = True,
+    mixture_dim: int = -2,
+) -> TransformFunc:
+    d = mixture_dim
+    vmapped_transform = torch.vmap(transform, (None, d), (d, d))
 
-    def _mixture_transform(x: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
-        params, weights = params.tensor_split([-1], dim=1)
+    if weighted:
 
-        n, ε = weights.shape[0], min_weight
-        weights = F.softmax(weights, dim=0) * (1 - n * ε) + ε
+        def mixture_transform(
+            x: Tensor, params: Tensor, **kwargs
+        ) -> tuple[Tensor, Tensor]:
+            params, weights = params.tensor_split([-1], dim=-1)
+            # NOTE: vmap/allclose support github.com/pytorch/functorch/issues/275
+            #assert torch.allclose(weights.sum(dim=d), torch.ones(1))
+            y, dydx = vmapped_transform(x, params, **kwargs)
+            assert y.shape == weights.shape
+            return (weights * y).sum(dim=d), (weights * dydx).sum(dim=d)
 
-        y, dydx = transform_vmap(x, params)
-        assert y.shape == weights.shape
-        return (weights * y).mean(dim=0), (weights * dydx).mean(dim=0)
+    else:
 
-    return _mixture_transform
+        def mixture_transform(
+            x: Tensor, params: Tensor, **kwargs
+        ) -> tuple[Tensor, Tensor]:
+            y, dydx = vmapped_transform(x, params, **kwargs)
+            return y.mean(dim=d), dydx.mean(dim=d)
 
-
-def mixture_transform(transform: Transform, n_mixture: int) -> Transform:
-    _transform = torch.vmap(transform, in_dims=(None, 0, 0), out_dims=(0, 0))
-
-    def _mixture_transform(x: Tensor, *args, **kwargs):
-        y, dydx = _transform(x, *args, **kwargs)
-        return y.mean(dim=0), dydx.mean(dim=0)
-
-    return _mixture_transform
-
-
-def weighted_mixture(transform: Transform, weights: Tensor) -> Transform:
-    weights = torch.softmax(weights, dim=0)
-
-    _transform = torch.vmap(transform, in_dims=(None, 0, 0), out_dims=(0, 0))
-
-    def _mixture_transform(x: Tensor, *args, **kwargs):
-        y, dydx = _transform(x, *args, **kwargs)
-        assert y.shape == weights.shape
-        return (y * weights).mean(dim=0), (dydx * weights).mean(dim=0)
-
-    return _mixture_transform
+    return mixture_transform
 
 
-if __name__ == "__main__":
-    x = torch.randn(1)
-    s = torch.rand(10, 1)
-    t = torch.rand(10, 1)
-    n = 10
+def invert_bisect(
+    mixture_transform: TransformFunc,
+    lower_bound: float,
+    upper_bound: float,
+    tol: float,
+    max_iter: int,
+):
+    @torch.no_grad()
+    def inverted_transform(y: Tensor, params: Tensor, **kwargs):
+        f = partial(mixture_transform, **kwargs)
 
-    f = mixture_transform(affine_transform, n)
-    y, dydx = f(x, s, t)
+        x_low = torch.full_like(y, lower_bound)
+        x_upp = torch.full_like(y, upper_bound)
 
-    print(y.shape, dydx.shape)
+        for _ in range(max_iter):
+            x_trial = 0.5 * (x_low + x_upp)
+            y_trial, dydx = f(x_trial, params)
 
-    g = weighted_mixture(affine_transform, torch.rand(10, 1))
-    y, dydx = g(x, s, t)
+            if (y - y_trial).abs().max() < tol:
+                return x_trial, 1 / dydx
 
-    print(y.shape, dydx.shape)
+            if torch.all((x_trial == x_low) & (x_trial == x_upp)):
+                raise ArithmeticError  # TODO
 
-    h = torch.vmap(f)
-    x = torch.randn(100, 1)
-    s = torch.randn(100, 10, 1)
-    t = torch.randn(100, 10, 1)
-    y, dydx = h(x, s, t)
+            x_low = torch.where(y > y_trial, x_trial, x_low)
+            x_upp = torch.where(y > y_trial, x_upp, x_trial)
 
-    print(y.shape, dydx.shape)
+        raise DidNotConvergeError(
+            "Failed to converge within specified n iters"
+        )
+
+    return inverted_transform

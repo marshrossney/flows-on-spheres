@@ -2,7 +2,7 @@ target:
   class_path: VonMisesFisherDensity
   init_args:
     κ: 10
-    μ: [1, 0, 0]
+    μ: [1, 1, 0]
 
 flow:
   class_path: RecursiveFlowS2
@@ -11,12 +11,12 @@ flow:
       class_path: RQSplineModule
       init_args:
         n_segments: 8
-        circular: false
     circular_transform:
       class_path: MobiusModule
       init_args:
-        n_mixture: 4
-        net_hidden_shape: []
+        n_mixture: 8
+        net_hidden_shape: [100]
+        net_activation: ReLU
     ordering: [1, 2, 3]
 
 steps: 2000

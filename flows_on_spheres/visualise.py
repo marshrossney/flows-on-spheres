@@ -8,16 +8,21 @@ import seaborn as sns
 import torch
 import torch.linalg as LA
 
-from flows_on_spheres.abc import Flow, Density, Hamiltonian
+from flows_on_spheres.flows import Flow
 from flows_on_spheres.geometry import (
     spherical_mesh,
     circle_vectors_to_angles,
     circle_angles_to_vectors,
     sphere_vectors_to_angles,
 )
-from flows_on_spheres.hmc import leapfrog_integrator, add_hmc_hooks
+from flows_on_spheres.hmc import (
+    Hamiltonian,
+    leapfrog_integrator,
+    add_hmc_hooks,
+)
 from flows_on_spheres.prior import uniform_prior
 from flows_on_spheres.linalg import orthogonal_projection, dot
+from flows_on_spheres.target import Density
 
 Tensor: TypeAlias = torch.Tensor
 Figure: TypeAlias = plt.Figure

@@ -6,7 +6,7 @@ from jsonargparse.typing import PositiveInt, PositiveFloat, Path_dw
 import pandas as pd
 import torch
 
-from flows_on_spheres.abc import Flow, Density
+from flows_on_spheres.flows import Flow
 from flows_on_spheres.hmc import (
     HamiltonianGaussianMomenta,
     HamiltonianCauchyMomenta,
@@ -14,11 +14,12 @@ from flows_on_spheres.hmc import (
     FlowedDensity,
 )
 from flows_on_spheres.metrics import integrated_autocorrelation
-from flows_on_spheres.scripts import (
-    CHECKPOINT_FNAME,
+from flows_on_spheres.scripts.io import (
     HMC_METRICS_FNAME,
     DUMMY_HMC_METRICS_FNAME,
+    load,
 )
+from flows_on_spheres.target import Density
 
 
 def hmc(
@@ -102,11 +103,11 @@ parser.add_argument("--dummy", action=ActionYesNo)
 
 def main(config: Namespace) -> None:
     model_path = Path(config.model)
-    flow = torch.load(model_path / CHECKPOINT_FNAME)
+    flow, target = load(model_path)
 
     metrics = hmc(
         flow=None if config.dummy else flow,
-        target=flow.target,
+        target=target,
         n_traj=config.n_traj,
         step_size=config.step_size,
         traj_length=config.traj_length,

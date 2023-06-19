@@ -11,6 +11,7 @@ Tensor: TypeAlias = torch.Tensor
 
 class LogWeightMetrics:
     def __init__(self, log_weights: Tensor):
+        log_weights = log_weights.detach().squeeze()
         assert log_weights.dim() == 1
         self.log_weights = log_weights
 

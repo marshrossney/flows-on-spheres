@@ -1,11 +1,17 @@
 from functools import partial
-from typing import Any, Callable, Optional
+from math import pi as π
+from typing import Optional
 
 import torch
+import torch.nn.functional as F
 
-from flows_on_spheres.nn import TransformModule
-from flows_on_spheres.linalg import dot, norm
-from flows_on_spheres.utils import mod_2pi
+from flows_on_spheres.nn import TransformModule, CircularTransformModule
+from flows_on_spheres.transforms.mixture import (
+    make_mixture,
+    normalise_weights,
+    invert_bisect,
+)
+from flows_on_spheres.transforms.typing import TransformFunc, Transform
 
 Tensor = torch.Tensor
 
@@ -14,30 +20,31 @@ Tensor = torch.Tensor
 
 
 def exponential_ramp(
-    x: Tensor, log_scale: Tensor, power: int, eps: float = 1e-9
-) -> Tensor:
+    x: Tensor, params: Tensor, *, power: int = 2, eps: float = 1e-9
+) -> tuple[Tensor, Tensor]:
     assert isinstance(power, int) and power > 0
-    α, β = log_scale.exp(), power
-    x_masked = torch.where(x > eps, x, torch.full_like(x, eps))
-    y = torch.where(
-        x > eps,
-        torch.exp(-α * x_masked.pow(-β)) / torch.exp(-α),
+    a, b, ε = params, power, eps
+    x_masked = torch.where(x > ε, x, torch.full_like(x, ε))
+    exp_factor = -a * x_masked.pow(-b)
+    ρ = torch.where(
+        x > ε,
+        torch.exp(exp_factor) / torch.exp(-a),
         torch.zeros_like(x),
     )
-    return
+    dρdx = (-b / x_masked) * exp_factor * ρ
+    return ρ, dρdx
 
 
-def monomial_ramp(x: Tensor, order: int) -> Tensor:
-    assert isinstance(order, int) and order > 0
-    return x.pow(order)
+def monomial_ramp(x: Tensor, params: Tensor, *, power: int = 2) -> Tensor:
+    assert isinstance(power, int) and power > 0
+    z = x ** (power - 1)
+    return x * z, power * z
 
 
-def generalised_sigmoid(
-    ramp: Callable[[Tensor, Any, ...], Tensor]
-) -> Callable[[Tensor, Any, ...], Tensor]:
-    def _sigmoid(x: Tensor, **ramp_kwargs):
-        ρ_x, dρdx_x = ramp(x, **ramp_kwargs)
-        ρ_1mx, dρdx_1mx = ramp(1 - x, **ramp_kwargs)
+def _sigmoid(ramp: TransformFunc) -> TransformFunc:
+    def sigmoid(x: Tensor, params: Tensor, **kwargs):
+        ρ_x, dρdx_x = ramp(x, params, **kwargs)
+        ρ_1mx, dρdx_1mx = ramp(1 - x, params, **kwargs)
 
         σ = ρ_x / (ρ_x + ρ_1mx)
 
@@ -45,127 +52,202 @@ def generalised_sigmoid(
 
         return σ, dσdx
 
-    return _sigmoid
+    return sigmoid
 
 
-class _BumpTransform:
-    def __init__(
-        self,
-        affine_log_scale: Tensor,
-        affine_shift: Tensor,
-        linear_weight: Tensor,
-        ramp_log_scale: Tensor,
-        ramp_power: int = 1,
-    ):
-        assert (affine_shift > 0).all()
-        assert (affine_shift < 1).all()
-        assert (linear_weight >= 0).all()
-        assert (linear_weight <= 1).all()
-        self.affine_log_scale = affine_log_scale
-        self.affine_shift = affine_shift
-        self.linear_weight = linear_weight
+def _affine_sigmoid(
+    sigmoid: TransformFunc,
+) -> TransformFunc:
+    def affine_sigmoid(x: Tensor, params: Tensor, **kwargs):
+        sigmoid_params, α, β = params.tensor_split([-2, -1], dim=-1)
+        σ, dσdx = sigmoid((x - β) * α + 0.5, sigmoid_params, **kwargs)
+        return σ, α * dσdx
 
-        self.ramp = partial(
-            exponential_ramp, log_scale=ramp_log_scale, power=ramp_power
+    return affine_sigmoid
+
+
+def _mix_with_identity(transform: TransformFunc) -> TransformFunc:
+    def identity_mixture(
+        x: Tensor, params: Tensor, **kwargs
+    ) -> tuple[Tensor, Tensor]:
+        params, c = params.tensor_split([-1], dim=-1)
+        # assert torch.all((c >= 0) and (c <= 1))
+
+        y, dydx = transform(x, params, **kwargs)
+
+        y = c * y + (1 - c) * x
+        dydx = c * dydx + (1 - c)
+
+        return y, dydx
+
+    return identity_mixture
+
+
+def _rescale_to_interval(
+    transform: TransformFunc,
+    lower_bound: float,
+    upper_bound: float,
+) -> TransformFunc:
+    lo, up = lower_bound, upper_bound
+    assert lo < up
+
+    def rescaled_transform(x: Tensor, *args, **kwargs):
+        y, dydx = transform((x - lo) / (up - lo), *args, **kwargs)
+        return y * (up - lo) + lo, dydx
+
+    return rescaled_transform
+
+
+def _forward_transform(
+    ramp: str,
+    n_mixture: int,
+    weighted: bool,
+    lower_bound: float,
+    upper_bound: float,
+) -> TransformFunc:
+    assert ramp in ("monomial", "exponential")
+    ramp = monomial_ramp if ramp == "monomial" else exponential_ramp
+
+    sigmoid = _sigmoid(ramp)
+    affine_sigmoid = _affine_sigmoid(sigmoid)
+    transform = _mix_with_identity(affine_sigmoid)
+    rescaled_transform = _rescale_to_interval(
+        transform, lower_bound, upper_bound
+    )
+
+    if n_mixture > 1:
+        return make_mixture(
+            rescaled_transform, weighted=weighted, mixture_dim=-2
         )
-        self.ramp_log_scale = ramp_log_scale
-        self.ramp_power = ramp_power
+    else:
+        return rescaled_transform
 
-    def __call__(self, x: Tensor) -> tuple[Tensor, Tensor]:
-        x = (x + 1) / 2
 
-        assert (x >= 0).all()
-        assert (x <= 1).all()
+def sigmoid_transform(
+    params_are_batched: bool,
+    n_mixture: int,
+    weighted: bool = True,
+    circular: bool = False,
+    ramp: str = "exponential",
+    ramp_kwargs: Optional[dict] = None,
+    min_weight: float = 1e-2,
+    invert_bisect_tol: float = 1e-3,
+    invert_bisect_max_iter: int = 100,
+) -> Transform:
+    weighted = weighted if n_mixture > 1 else False
 
-        (
-            loga,
-            b,
-            c,
-        ) = (
-            self.affine_log_scale,
-            self.affine_shift,
-            self.linear_weight,
+    in_dims = (0, 0) if params_are_batched else (0, None)
+    vmap = partial(torch.vmap, in_dims=in_dims, out_dims=(0, 0))
+
+    forward_fn = vmap(
+        _forward_transform(
+            ramp,
+            n_mixture=n_mixture,
+            weighted=weighted,
+            lower_bound=0 if circular else -1,
+            upper_bound=2 * π if circular else +1,
         )
-        a = loga.exp()
+    )
+    inverse_fn = invert_bisect(
+        forward_fn,
+        0 if circular else -1,
+        2 * π if circular else +1,
+        tol=invert_bisect_tol,
+        max_iter=invert_bisect_max_iter,
+    )
 
-        logα, β = self.ramp_log_scale, self.ramp_power
-        α = logα.exp()
+    funcs = [lambda x: x.negative().exp(), torch.sigmoid, torch.sigmoid]
+    if ramp == "exponential":
+        funcs.insert(0, lambda x: F.softplus(x) + 1e-3)
+    if weighted:
+        funcs.append(partial(normalise_weights, dim=-2, min=min_weight))
 
-        x10 = torch.stack([x, torch.zeros_like(x), torch.ones_like(x)])
+    def handle_params(params: Tensor) -> Tensor:
+        params = params.unflatten(-1, (n_mixture, -1)).split(1, dim=-1)
+        return torch.cat(
+            [func(param) for func, param in zip(funcs, params, strict=True)],
+            dim=-1,
+        ).squeeze(dim=-2)
 
-        h_x10 = a * (x10 - b) + (1 / 2)  # affine transform of x
+    class SigmoidTransform:
+        def __init__(self, params: Tensor):
+            self.params = handle_params(params)
 
-        ε = 1e-9
+        def __call__(self, x: Tensor) -> tuple[Tensor, Tensor]:
+            return forward_fn(x, self.params)
 
-        ρ_x10 = self.ramp(h_x10)
-        ρ1m_x10 = self.ramp(1 - h_x10)
+        def inverse(self, y: Tensor) -> tuple[Tensor, Tensor]:
+            return inverse_fn(y, self.params)
 
-        # The numerically stable version is much better!
-        # ρ_x10 = torch.exp(-1 / (α * h_x10.pow(β) + ε)) / torch.exp(-1 / α)
-        # ρ1m_x10 = torch.exp(-1 / (α * (1 - h_x10).pow(β) + ε)) / torch.exp(-1 / α)
-
-        σ_x10 = ρ_x10 / (ρ_x10 + ρ1m_x10)
-
-        σx, σ0, σ1 = σ_x10
-
-        y = c * (σx - σ0) / (σ1 - σ0) + (1 - c) * x
-
-        dσdx = (
-            a
-            * σx
-            * (1 - σx)
-            * (β / α)
-            * ((x.pow(β + 1) + (1 - x).pow(β + 1)) / (x * (1 - x)).pow(β + 1))
-        )
-
-        dydx = c * dσdx / (σ1 - σ0) + (1 - c)
-
-        ldj = dydx.log().squeeze(1)
-
-        y = y * 2 - 1
-
-        return y, ldj
+    return SigmoidTransform
 
 
-class _BumpMixtureTransform:
-    pass
-
-
-class BumpModule(TransformModule):
+class SigmoidModule(TransformModule):
     def __init__(
         self,
         *,
-        n_mixture: int = 1,
-        weighted: bool = False,
+        n_mixture: int,
         net_hidden_shape: Optional[list[int]] = None,
         net_activation: Optional[str] = None,
-        epsilon: float = 1e-2,
-        ramp_power: int = 2,
+        weighted: bool = True,
+        min_weight: float = 1e-2,
+        ramp: str = "exponential",
+        ramp_kwargs: Optional[dict] = None,
+        invert_bisect_tol: float = 1e-3,
+        invert_bisect_max_iter: int = 100,
     ):
-        assert not (n_mixture == 1 and weighted)
         super().__init__(
             n_params=(4 + int(weighted)) * n_mixture,
             net_hidden_shape=net_hidden_shape,
             net_activation=net_activation,
         )
-        self.n_mixture = n_mixture
-        self.weighted = weighted
-        self.epsilon = epsilon
+        self._transform = sigmoid_transform(
+            params_are_batched=net_hidden_shape is not None,
+            n_mixture=n_mixture,
+            weighted=weighted,
+            circular=False,
+            ramp=ramp,
+            ramp_kwargs=ramp_kwargs,
+            min_weight=min_weight,
+            invert_bisect_tol=invert_bisect_tol,
+            invert_bisect_max_iter=invert_bisect_max_iter,
+        )
 
-        self.ramp_power = ramp_power
+    def transform(self, params: Tensor) -> Transform:
+        return self._transform(params)
 
-    def forward(
-        self, k: Tensor | None = None
-    ) -> _BumpTransform | _BumpMixtureTransform:
-        params = self.params(k)
 
-        if self.n_mixture == 1:
-            loga, b, c, logα = params.split(1, dim=1)
-            c = torch.sigmoid(c)
-            return _BumpTransform(
-                affine_log_scale=logα,
-                affine_shift=torch.sigmoid(b),
-                linear_weight=torch.sigmoid(c),
-                ramp_log_scale=logα,
-                ramp_power=self.ramp_power,
-            )
+class CircularSigmoidModule(CircularTransformModule):
+    def __init__(
+        self,
+        *,
+        n_mixture: int,
+        weighted: bool = True,
+        min_weight: float = 1e-2,
+        ramp: str = "exponential",
+        ramp_kwargs: Optional[dict] = None,
+        invert_bisect_tol: float = 1e-3,
+        invert_bisect_max_iter: int = 100,
+        net_hidden_shape: Optional[list[int]] = None,
+        net_activation: Optional[str] = None,
+    ):
+        weighted = weighted if n_mixture > 1 else False
+        super().__init__(
+            n_params=(4 + int(weighted)) * n_mixture,
+            net_hidden_shape=net_hidden_shape,
+            net_activation=net_activation,
+        )
+        self._transform = sigmoid_transform(
+            params_are_batched=net_hidden_shape is not None,
+            n_mixture=n_mixture,
+            weighted=weighted,
+            circular=True,
+            ramp=ramp,
+            ramp_kwargs=ramp_kwargs,
+            min_weight=min_weight,
+            invert_bisect_tol=invert_bisect_tol,
+            invert_bisect_max_iter=invert_bisect_max_iter,
+        )
+
+    def transform(self, params: Tensor) -> Transform:
+        return self._transform(params)

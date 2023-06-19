@@ -1,17 +1,26 @@
+from abc import ABC, abstractmethod
 from math import pi as π
 from typing import TypeAlias
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-from flows_on_spheres.abc import Flow
 from flows_on_spheres.geometry import as_angle, as_vector, mod_2pi
 from flows_on_spheres.nn import TransformModule, CircularTransformModule
-from flows_on_spheres.linalg import norm_keepdim
 
 Tensor: TypeAlias = torch.Tensor
 BoolTensor: TypeAlias = torch.BoolTensor
+
+
+class Flow(nn.Module, ABC):
+    @property
+    @abstractmethod
+    def dim(self) -> int:
+        ...
+
+    @abstractmethod
+    def forward(self, inputs: Tensor) -> tuple[Tensor, Tensor]:
+        ...
 
 
 class CircularFlow(Flow):
@@ -25,9 +34,10 @@ class CircularFlow(Flow):
     def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
         f, θ = self.transform, self.rotation
 
-        ϕ, ldj = f(None)(as_angle(x))
+        ϕ, dydx = f(None)(as_angle(x))
 
         y = as_vector(mod_2pi(ϕ + θ))
+        ldj = dydx.log().squeeze(dim=1)
 
         return y, ldj
 
@@ -63,8 +73,8 @@ class RecursiveFlowS2(Flow):
         x3, x1_x2 = x.tensor_split([1], dim=1)
         ϕ12 = as_angle(x1_x2)
 
-        y3, ldj_3 = self.interval_transform(None)(x3)
-        ψ12, ldj_12 = self.circular_transform(y3)(ϕ12)
+        y3, dydx_3 = self.interval_transform(None)(x3)
+        ψ12, dydx_12 = self.circular_transform(y3)(ϕ12)
         z1_z2 = as_vector(ψ12)  # + self.rotation)  # unit circle
 
         # False elements are very close to poles +/- 1
@@ -84,9 +94,9 @@ class RecursiveFlowS2(Flow):
         y = torch.cat([y3, y1_y2], dim=1)
         y = y[:, self.inverse_ordering]
 
-        ldj_total = ldj_3 + ldj_12
+        ldj = (dydx_3.log() + dydx_12.log()).squeeze(dim=1)
 
-        return y, ldj_total
+        return y, ldj
 
 
 class RecursiveFlowSD(Flow):
@@ -131,8 +141,6 @@ class RecursiveFlowSD(Flow):
         D = self.dim
         ε = self.epsilon
 
-        ldj_total = x.new_zeros(x.shape[0])
-
         x = x[:, self.ordering]
 
         # Unwrap onto cylinder, counting down from i=D to i=2
@@ -159,21 +167,21 @@ class RecursiveFlowSD(Flow):
 
         # Unconditionally transform the first component
         x1, f1 = next(zip_x_and_transform)
-        y1, ldj_1 = f1(None)(x1)
-        ldj_total += ldj_1
+        y1, dydx_1 = f1(None)(x1)
 
         # Transform remaining, conditioned on those already transformed
         y_intervals = y1
+        jacobian_diag = dydx_1
         for x_i, f_i in zip_x_and_transform:
-            y_i, ldj_i = f_i(y_intervals)(x_i)
-            ldj_total += ldj_i
+            y_i, dydx_i = f_i(y_intervals)(x_i)
 
             y_intervals = torch.cat([y_intervals, y_i], dim=1)
+            jacobian_diag = torch.cat([jacobian_diag, dydx_i], dim=1)
 
         # Transform circular part, conditioned on all interval parts
         x_D = as_angle(x_circle)
-        y_D, ldj_D = self.circular_transform(y_intervals)(x_D)
-        ldj_total += ldj_D
+        y_D, dydx_D = self.circular_transform(y_intervals)(x_D)
+        jacobian_diag = torch.cat([jacobian_diag, dydx_D], dim=1)
         y_circle = as_vector(y_D + self.rotation)
 
         # Wrap back onto the sphere, counting up from i=2 to i=D
@@ -197,6 +205,9 @@ class RecursiveFlowSD(Flow):
         # reorder
         y = y_sphere[:, self.inverse_ordering]
 
+        # Triangular jacobian => det is simply product of diagonal elements
+        ldj = jacobian_diag.log().sum(dim=1)
+
         # Compute ldj for the cylinder->sphere transformation and inverse
         # Take advantage of cancellation of large ρ and r near the poles
         for D_i, ρ_i, r_i in zip(
@@ -205,9 +216,9 @@ class RecursiveFlowSD(Flow):
             scale_factors_inverse,
             strict=True,
         ):
-            ldj_total -= (D_i - 2) * torch.log(ρ_i / r_i).squeeze(1)
+            ldj -= (D_i - 2) * torch.log(ρ_i / r_i).squeeze(dim=1)
 
-        return y, ldj_total
+        return y, ldj
 
 
 class Composition(Flow):

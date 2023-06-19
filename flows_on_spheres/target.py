@@ -1,16 +1,39 @@
 """
 Classes defining target densities on the D-spheres.
 """
+from abc import ABC, abstractmethod
 from math import exp, isclose, log, pi as π, sqrt
 from typing import Optional, TypeAlias
 
 import torch
 from scipy.special import iv
 
-from flows_on_spheres.abc import Density
 from flows_on_spheres.linalg import orthogonal_projection
 
 Tensor: TypeAlias = torch.Tensor
+
+
+class Density(ABC):
+    @property
+    @abstractmethod
+    def dim(self) -> int:
+        ...
+
+    @abstractmethod
+    def density(self, x: Tensor) -> Tensor:
+        ...
+
+    @abstractmethod
+    def log_density(self, x: Tensor) -> Tensor:
+        ...
+
+    @abstractmethod
+    def grad_density(self, x: Tensor) -> Tensor:
+        ...
+
+    @abstractmethod
+    def grad_log_density(self, x: Tensor) -> Tensor:
+        ...
 
 
 class _MixtureDensity(Density):

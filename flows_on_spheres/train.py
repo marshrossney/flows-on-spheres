@@ -1,12 +1,14 @@
+import pandas as pd
 import torch
 from tqdm import trange
-import pandas as pd
+from typing import TypeAlias
 
-from flows_on_spheres.abc import Flow, Density
+from flows_on_spheres.flows import Flow
 from flows_on_spheres.prior import uniform_prior
 from flows_on_spheres.metrics import LogWeightMetrics
+from flows_on_spheres.target import Density
 
-Tensor = torch.Tensor
+Tensor: TypeAlias = torch.Tensor
 
 # torch.autograd.set_detect_anomaly(True)
 
@@ -51,7 +53,7 @@ def train(
 
     flow.target = target
 
-    with trange(steps, desc="Training") as pbar:
+    with trange(steps + 1, desc="Training") as pbar:
         pbar.write(
             "   Step  |  Acc    |  ESS    |      log(p_target) - log(p_model)       "
         )
